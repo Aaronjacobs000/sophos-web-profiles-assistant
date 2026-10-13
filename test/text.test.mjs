@@ -64,3 +64,10 @@ test("every scorecard item carries a plain topic label", async () => {
   const { renderReport } = await import("../backend/dist/domain/report.js");
   assert.equal(typeof renderReport, "function");
 });
+
+test("no build-plan drop numbers in UI text or the README", () => {
+  for (const f of files) {
+    const text = readFileSync(f, "utf8");
+    assert.doesNotMatch(text, /\bdrops? \d/i, path.relative(root, f));
+  }
+});

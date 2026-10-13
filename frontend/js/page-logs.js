@@ -18,7 +18,7 @@ async function render() {
   const rows = [...logs.items].reverse().slice(0, 300);
   main.innerHTML = `
     <section class="page-head"><div><span class="eyebrow">Tools</span><h1>Logs</h1>
-      <p class="page-lead">What the server did since it started, newest first. Secrets are masked. The audit log lists every snapshot saved; drops 2 and 3 add every change they make.</p></div></section>
+      <p class="page-lead">What the server did since it started, newest first. Secrets are masked. The audit log lists every snapshot the tool saves and every change it makes to a tenant.</p></div></section>
     <section class="panel-card"><div class="card-head"><h2>Audit log</h2><span class="tag tag-muted">data/audit.log</span></div>
       <div class="table-wrap"><table class="data-table"><thead><tr><th>Time</th><th>Tenant</th><th>Action</th><th>What</th><th>Result</th></tr></thead><tbody>
       ${audit.items.length ? audit.items.slice(0, 50).map((a) => `<tr><td class="cell-nowrap">${a.ts ? when(a.ts) : ""}</td><td>${esc(a.tenantName ?? a.tenantId ?? "")}</td><td>${esc(a.action ?? "")}</td><td><code>${esc(a.resourceId ?? "")}</code></td><td>${a.ok ? '<span class="tag tag-ok">Done</span>' : '<span class="tag tag-bad">Failed</span>'}</td></tr>`).join("") : '<tr><td colspan="5" class="empty-state">Nothing yet.</td></tr>'}

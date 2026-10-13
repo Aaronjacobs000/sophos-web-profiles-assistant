@@ -4,6 +4,38 @@ A local web tool that takes a Sophos Fusion (formerly Sophos Central) tenant, or
 
 > **Unofficial tool, not from Sophos and not supported by Sophos.** It calls the public Sophos Fusion APIs with a credential you supply. Confirm every setting in Sophos Fusion before you change it, and try it on a test tenant first. It has been tested on test tenants only.
 
+## What it looks like
+
+Readiness scorecard for one tenant: fixes before the pilot, things to plan around, eligible devices.
+
+![Readiness scorecard](docs/screenshots/01-readiness.png)
+
+Clean-up sorts each Website Management entry into Covered, Exception or Remove, with the reason (DNS checks only here, no Intelix).
+
+![Clean-up results](docs/screenshots/02-clean-up.png)
+
+The site list cleaner classifying a pasted list, ready to export CSVs for site lists.
+
+![Site list cleaner](docs/screenshots/03-site-list-cleaner.png)
+
+Design maps a classic policy to a Custom profile group by group.
+
+![Design step](docs/screenshots/04-design.png)
+
+Build creates the site lists, the profile and a disabled pilot policy, each read back as matching.
+
+![Build read-back](docs/screenshots/05-build-read-back.png)
+
+Pilot digest of warned and blocked hits (sample events), with a narrow Allow.
+
+![Pilot digest](docs/screenshots/06-pilot-digest-sample-data.png)
+
+A promotion wave read back, then the dry-run plan to retire Website Management tags.
+
+![Promote and retire](docs/screenshots/07-promote-and-retire.png)
+
+The screenshots come from a test tenant; its name and device names are replaced.
+
 ## What it does
 
 Checks only read; every write is previewed in a dry run, sent once, read back, recorded in the audit log, and can be rolled back.
