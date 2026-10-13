@@ -73,6 +73,8 @@ export interface CleanupResult {
   lookupError?: string;
   dns?: DnsResult;
   categoryLabel?: string;
+  /** The classic category a Website Management override puts the site in. */
+  override?: string;
   /** Set when the entry covers far more than one site (a whole top-level domain, a public suffix, a shared platform, a wide range). Left out of site lists until decided. */
   broad?: string;
 }
@@ -89,7 +91,8 @@ const VERB: Record<FilterAction, string> = { allow: "allows", block: "blocks", w
  * Classifies one entry. `seen` holds site values already classified, to catch
  * duplicates. A broad entry (a whole top-level domain, a public suffix such as
  * co.uk, a shared hosting platform, a range wider than /24, or a wildcard on
- * any of them) keeps its verdict but needs a decision, with the reason first.
+ * any of them) that would go into a site list needs a decision, with the
+ * reason first.
  */
 export function classify(
   input: CleanupInput,
@@ -97,7 +100,8 @@ export function classify(
   opts: { lookup?: IntelixLookup; lookupError?: string; dns?: DnsResult; seen?: Set<string> } = {},
 ): CleanupResult {
   const r = classifyEntry(input, catalog, opts);
-  if (r.verdict === "remove") return r;
+  // Only exceptions go into site lists, so only they need the review.
+  if (r.verdict !== "exception") return r;
   const b = broadness(r.site);
   if (!b.broad) return r;
   const why = b.why ?? b.reason ?? "covers many sites";
@@ -123,6 +127,7 @@ function classifyEntry(
     lookupError: opts.lookupError,
     dns: opts.dns,
     categoryLabel: opts.lookup?.profileCategory ? labelOf(catalog, opts.lookup.profileCategory) : undefined,
+    ...(input.categoryId !== undefined ? { override: CLASSIC_CATEGORIES.find((c) => c.id === input.categoryId)?.label ?? `category ${input.categoryId}` } : {}),
   };
   const out = (verdict: Verdict, reason: string, needsDecision = false): CleanupResult => ({ ...base, verdict, reason, needsDecision });
 
@@ -133,7 +138,7 @@ function classifyEntry(
     if (opts.seen.has(site.value)) return out("remove", "Repeats an earlier entry.");
     opts.seen.add(site.value);
   }
-  const override = input.categoryId === undefined ? null : CLASSIC_CATEGORIES.find((c) => c.id === input.categoryId)?.label ?? `category ${input.categoryId}`;
+  const override = base.override ?? null;
   if (action === "none" && override) {
     return out("exception", `Overrides its category to ${override}, but no policy here gives that category an action (category filtering off, or no setting); decide what it should do.`, true);
   }
@@ -148,9 +153,16 @@ function classifyEntry(
   if (override && CLASSIC_ALWAYS_BLOCKED.has(input.categoryId!) && action === "block") {
     return out("exception", `Website Management puts it in ${override}, which classic always blocks; profiles have no category override, so it moves to a Block site list.`);
   }
+  if (!lookup && (site.kind === "cidr4" || site.kind === "cidr6")) {
+    return out("exception", "An address range has no SophosLabs category; kept until you decide.", true);
+  }
   if (!lookup?.profileCategory) {
     if (lookup && lookup.productivityCategory) {
       return out("exception", `SophosLabs category ${lookup.productivityCategory} has no profile equivalent; kept until you decide.`, true);
+    }
+    if (lookup) {
+      // Seen live (13/10/2026): an unknown site comes back 200 with scores but no category.
+      return out("exception", "SophosLabs has no category for it yet (often a new, rare or internal site); kept until you decide.", true);
     }
     return out(
       "exception",

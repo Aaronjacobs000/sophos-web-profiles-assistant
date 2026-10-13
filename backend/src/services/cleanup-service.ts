@@ -13,7 +13,7 @@ import { catalogFrom, classicOverrideAction, type Catalog } from "../domain/cate
 import { buildDesign } from "../domain/design.js";
 import { isBasePolicy, settingValue } from "../domain/inventory.js";
 import { parseSite } from "../domain/sites.js";
-import { notWorthLookingUp, type IntelixClient, type IntelixLookup } from "../domain/intelix.js";
+import { worthALookup, type IntelixClient, type IntelixLookup } from "../domain/intelix.js";
 import type { FilterAction } from "../domain/categories-data.js";
 import { ReadOnlyApi, type TenantApi } from "../sophos/api/requester.js";
 import { listLocalSites, type LocalSite } from "../sophos/api/web-control.js";
@@ -102,7 +102,9 @@ export async function classifyInputs(
     }
     let lookup: IntelixLookup | undefined;
     let lookupError: string | undefined;
-    if (opts.intelix && site.value && dns?.status !== "nxdomain" && !notWorthLookingUp(site.host) && !intelixError) {
+    // Lookups are billed: skip entries no policy acts on (the clean-up removes them anyway), ranges, and private names.
+    const actsSomewhere = input.targets.length > 0 || input.categoryId !== undefined;
+    if (opts.intelix && actsSomewhere && worthALookup(site) && dns?.status !== "nxdomain" && !intelixError) {
       const q = site.kind === "url" ? site.value : site.host;
       if (!lookups.has(q)) {
         lookups.set(

@@ -71,3 +71,12 @@ test("no build-plan drop numbers in UI text or the README", () => {
     assert.doesNotMatch(text, /\bdrops? \d/i, path.relative(root, f));
   }
 });
+
+test("every browser script parses", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const scripts = readdirSync(path.join(frontend, "js")).filter((f) => f.endsWith(".js")).map((f) => path.join(frontend, "js", f));
+  scripts.push(path.join(root, "scripts/static-cleaner-app.js"));
+  for (const f of scripts) {
+    assert.doesNotThrow(() => execFileSync(process.execPath, ["--check", f], { stdio: "pipe" }), path.relative(root, f));
+  }
+});

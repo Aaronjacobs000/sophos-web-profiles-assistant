@@ -53,11 +53,11 @@ let query = "";
 function rowHtml(r) {
   const verdict = r.decided?.verdict ?? r.verdict;
   const action = r.decided?.action ?? r.action;
-  const cat = r.categoryLabel ?? r.lookup?.productivityCategory ?? (r.lookupError ? "Lookup failed" : "Not looked up");
+  const cat = r.categoryLabel ?? r.lookup?.productivityCategory ?? (r.lookupError ? "Lookup failed" : r.lookup ? "No category" : "Not looked up");
   const risk = r.lookup?.riskLevel ?? "";
   return `<tr data-id="${escAttr(r.id)}">
     <td class="cu-site"><b>${esc(r.site.value || r.raw)}</b>${r.site.value && r.site.value !== r.raw.trim() ? `<span class="t-sub">was ${esc(r.raw)}</span>` : ""}</td>
-    <td>${r.tags.length ? esc(r.tags.join(", ")) : '<span class="muted">none</span>'}<span class="t-sub"><span class="tag ${ACTION_TAG[action] ?? "tag-muted"}">${esc(action)}</span></span></td>
+    <td>${r.tags.length ? esc(r.tags.join(", ")) : r.override ? "" : '<span class="muted">none</span>'}${r.override ? `<span class="t-sub">Category override: ${esc(r.override)}</span>` : ""}<span class="t-sub"><span class="tag ${ACTION_TAG[action] ?? "tag-muted"}">${esc(action)}</span></span></td>
     <td>${esc(cat)}${r.lookup?.securityRisk ? `<span class="t-sub" style="color:var(--bad)">${esc(r.lookup.securityCategory)}</span>` : ""}</td>
     <td>${risk ? `<span class="${risk === "HIGH" ? "off" : ""}">${esc(risk)}</span>` : '<span class="muted">none</span>'}</td>
     <td>${r.dns ? esc(r.dns.status) : '<span class="muted">not checked</span>'}</td>

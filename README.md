@@ -10,7 +10,7 @@ Readiness scorecard for one tenant: fixes before the pilot, things to plan aroun
 
 ![Readiness scorecard](docs/screenshots/01-readiness.png)
 
-Clean-up sorts each Website Management entry into Covered, Exception or Remove, with the reason (DNS checks only here, no Intelix).
+Clean-up sorts each Website Management entry into Covered, Exception or Remove, with the reason, using DNS and real SophosLabs categories from Intelix.
 
 ![Clean-up results](docs/screenshots/02-clean-up.png)
 
@@ -73,11 +73,13 @@ The wizard tests the credential with Sophos before it saves it, and takes an opt
 
 ## SophosLabs Intelix (optional)
 
-The clean-up step looks up each site's SophosLabs category with the Intelix URL lookup API. Intelix is a separate subscription on AWS Marketplace, billed per lookup (5,000 free a month, then US$0.002 each, at the time of writing). Add the Client ID, Secret and region (au, us or de) in the setup wizard or on the Credentials page; Test asks Intelix for a token and costs nothing.
+The clean-up step looks up each site's SophosLabs category with the Intelix URL lookup API. Intelix is a separate subscription on AWS Marketplace, billed per lookup (5,000 free a month, then US$0.002 each, at the time of writing). Add the Client ID, Secret and region (au, us or de) in the setup wizard or on the Credentials page; Test asks Intelix for a token and costs nothing. A credential works in all three regions, so pick the nearest.
 
 Without Intelix the clean-up still runs: it checks DNS, removes dead, repeated and unused entries, and keeps the rest as exceptions until you decide them in the table or in the CSV.
 
-The Intelix client follows the published API docs. No Intelix credential was available while it was built, so it has only run against mocks.
+Lookups cost money, so the clean-up only looks up entries a policy acts on, and never ranges, whole top-level domains or private names. A site SophosLabs doesn't know yet comes back with no category and is kept until you decide.
+
+Tested live on 13/10/2026: the token call; lookups in au, us and de; the category mapping, Generative AI included; an unknown site; a single IP address; a refused credential; and the single-file cleaner calling Intelix from a file and from `http://localhost`. Rate limiting (5,000 lookups a minute, per the API's own headers) wasn't reached in testing; the retry on a 429 is unit-tested.
 
 ## The API role it needs
 
@@ -199,7 +201,7 @@ Scans read `ESTATE_CONCURRENCY` tenants at once, 4 by default and 8 at most. Eac
 
 ## The static site list cleaner
 
-`npm run build:cleaner` writes `build/site-list-cleaner.html`: one file, no server and no external files, for the paste-and-classify half of the cleaner. It calls SophosLabs Intelix only, with a credential typed into the page and kept in its memory, and exports the same CSVs. It has no DNS checks. It isn't hosted anywhere; how it ships is a decision for later.
+`npm run build:cleaner` writes `build/site-list-cleaner.html`: one file, no server and no external files, for the paste-and-classify half of the cleaner. It calls SophosLabs Intelix only, with a credential typed into the page and kept in its memory, and exports the same CSVs. Intelix allows these browser calls, so the page works opened as a file or from any web server (both tested). It has no DNS checks. It isn't hosted anywhere; how it ships is a decision for later.
 
 ## Using it from other machines
 
@@ -207,7 +209,7 @@ The server listens on 127.0.0.1:3110, so only this computer can reach it. To ser
 
 ## Known gaps
 
-- **SophosLabs categories.** The Fusion API returns no SophosLabs category for a site, even though the June 2026 community post promised one. The Category Checker tab shows categories in the Sophos Fusion console, but not through the API. The clean-up uses Intelix instead, and the Intelix client has only run against mocks.
+- **SophosLabs categories.** The Fusion API returns no SophosLabs category for a site, even though the June 2026 community post promised one. The Category Checker tab shows categories in the Sophos Fusion console, but not through the API. The clean-up uses Intelix instead.
 - **Reports.** There's no Web Control reports API. SIEM events go back about 24 hours and give the action and reason as free text, so the pilot digest has to collect daily and parse the text. The test tenant had no Web Control events, so the digest has run live only on an empty result; its parsing is tested on synthetic events in `test/fixtures/` that copy the live file type wording, plus made-up category and site list events.
 - **Turning the pilot on.** The on and off switch is unit-tested only; the live tests kept the pilot off so no device's browsing changed.
 - **Admin role.** The API can't show an admin's role, so the Manage web profiles check is manual.

@@ -29,7 +29,7 @@ function pilotCard() {
       <li><span class="o-name">${esc(p.policyName)}<span class="o-kind">Policy, priority ${esc(pol?.priority ?? "?")}</span></span><span class="o-meta">${n(targets)} ${pol?.users.length || pol?.userGroups.length ? "user" : "device"} ${targets === 1 ? "target" : "targets"}</span></li>
       <li><span class="o-name">${esc(p.profileName)}<span class="o-kind">Profile</span></span><span class="o-meta"><a href="/build.html?tenant=${encodeURIComponent(tenantId)}">Build</a></span></li>
     </ul>
-    ${pol && !pol.enabled ? '<p class="hint">The pilot is off, so it filters nothing yet. Turn it on from the Promote and retire page when you're ready.</p>' : ""}</section>`;
+    ${pol && !pol.enabled ? '<p class="hint">The pilot is off, so it filters nothing yet. Turn it on from the Promote and retire page when you are ready.</p>' : ""}</section>`;
 }
 
 function collectionCard() {
@@ -45,10 +45,13 @@ function collectionCard() {
 }
 
 function allowsCard() {
-  const rows = view.allows
+  // This pilot's entries; entries from earlier builds are counted, not listed.
+  const current = view.pilot ? view.allows.filter((a) => a.buildId === view.pilot.buildId) : view.allows;
+  const earlier = view.allows.length - current.length;
+  const rows = current
     .map((a) => `<li><span class="o-name">${esc(a.site)}<span class="o-kind">${esc(a.listName || "")} · ${when(a.at)}${a.readBack ? ` · ${esc(a.readBack)}` : ""}${a.error ? ` · ${esc(a.error)}` : ""}</span></span><span class="o-meta">${a.status === "added" && a.buildStatus === "rolled-back" ? '<span class="tag tag-muted">Removed with the build</span>' : `${ALLOW_STATUS[a.status] ?? ""}${["added", "undo-failed"].includes(a.status) ? ` <button class="btn btn-small" data-undo="${escAttr(a.id)}">Undo</button>` : ""}`}</span></li>`)
     .join("");
-  return `<section class="panel-card"><h2>Allow entries</h2>${rows ? `<ul class="order-list">${rows}</ul>` : '<p class="muted">None yet. Allow a host from the sites table.</p>'}</section>`;
+  return `<section class="panel-card"><h2>Allow entries</h2>${rows ? `<ul class="order-list">${rows}</ul>` : '<p class="muted">None yet. Allow a host from the sites table.</p>'}${earlier ? `<p class="hint">${earlier} more ${earlier === 1 ? "entry belongs" : "entries belong"} to earlier builds.</p>` : ""}</section>`;
 }
 
 function tiles() {

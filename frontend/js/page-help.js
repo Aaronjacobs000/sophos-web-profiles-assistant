@@ -56,6 +56,9 @@ async function start() {
       <p><strong>Reads</strong> (GET only): devices, Web Control and Threat Protection policies (computer and server), Website Management, the classic category list, SSL/TLS decryption settings, scanning exclusions, device groups, user groups, the users a policy names, and web filtering profiles and site lists. A check is usually 13 to 40 calls. The client refuses any write, so nothing in a tenant can change.</p>
       <p><strong>Writes</strong> to the tenant only when you confirm one: the build and its rollback, one-click site lists, a narrow Allow, a promotion wave, turning the pilot on or off, and retiring or restoring tags. Each is previewed first, sent once, read back, and recorded in <code>data/audit.log</code>. On this computer: <code>.env</code> (the credentials) and the <code>data/</code> folder (snapshots, results, clean-up runs, design choices, build records, SIEM events, and the pilot, promotion and retire records).</p>
 
+      <h2>SophosLabs Intelix</h2>
+      <p>Optional. With an Intelix credential the clean-up looks up each entry's SophosLabs category and compares it with the profile. Lookups are billed, so it only looks up entries a policy acts on, and never ranges, whole top-level domains or private names. A site SophosLabs doesn't know yet comes back with no category and is kept until you decide. Tested live on 13/10/2026: lookups in every region, the category mapping (Generative AI included), unknown sites, IP addresses, a refused credential, and the single-file cleaner from a file and from a local web server.</p>
+
       <h2>Steps and what they write</h2>
       <table><thead><tr><th>Step</th><th>What it does</th><th>Writes to the tenant</th></tr></thead><tbody>
         <tr><td>1. Readiness</td><td>Scorecard, estate view, report, snapshot</td><td>Nothing</td></tr>

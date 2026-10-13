@@ -10,9 +10,9 @@
  *           Billed per 200. 5,000 requests a minute.
  *
  * It uses fetch and nothing else, so it runs in the server and in the static
- * site list cleaner page (Intelix allows browser calls: its token endpoint
- * echoes the Origin, its lookup hosts answer "*"). It has only run against
- * mocks: no Intelix credential was available when it was built (13/10/2026).
+ * site list cleaner page. Tested live on 13/10/2026: the token call, lookups
+ * in all three regions (a credential isn't tied to one), the field mapping,
+ * and a refused credential.
  *
  * Pure: no Node or browser imports; fetch is injected or global.
  */
@@ -61,6 +61,16 @@ function base64(text: string): string {
   throw new Error("No base64 encoder available.");
 }
 
+/**
+ * True when SophosLabs files a site under a threat: phishing, malware, spam
+ * or a potentially unwanted application. SEC_UNCATEGORIZED and
+ * SEC_TRUSTED_UPDATE_SITE (seen live for sophos.com, 13/10/2026) aren't.
+ */
+export function isSecurityRisk(securityCategory: string | undefined): boolean {
+  if (!securityCategory || securityCategory === "SEC_UNCATEGORIZED" || securityCategory.startsWith("SEC_TRUSTED")) return false;
+  return INTELIX_SECURITY_CATEGORIES.includes(securityCategory) || /^SEC_(ILLEGAL|MALWARE|SPAM|PUA)_/.test(securityCategory);
+}
+
 /** Addresses the docs say always come back uncategorized, so a lookup would only cost money. */
 export function notWorthLookingUp(host: string): boolean {
   if (!host.includes(".")) return true;
@@ -71,6 +81,17 @@ export function notWorthLookingUp(host: string): boolean {
     return a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254);
   }
   return false;
+}
+
+/**
+ * Whether a parsed entry is worth a paid lookup: one site or address with a
+ * public name. A range (CIDR), a whole top-level domain and private or
+ * internal names aren't.
+ */
+export function worthALookup(site: { kind: string; host: string; value: string }): boolean {
+  if (!site.value || !site.host) return false;
+  if (site.kind === "cidr4" || site.kind === "cidr6" || site.kind === "tld" || site.kind === "invalid") return false;
+  return !notWorthLookingUp(site.host);
 }
 
 export class IntelixClient {
@@ -136,7 +157,7 @@ export class IntelixClient {
         securityScore: typeof body.securityScore === "number" ? body.securityScore : undefined,
         riskLevel: typeof body.riskLevel === "string" ? body.riskLevel : undefined,
         profileCategory: productivityCategory ? INTELIX_TO_PROFILE[productivityCategory] : undefined,
-        securityRisk: !!securityCategory && securityCategory !== "SEC_UNCATEGORIZED" && INTELIX_SECURITY_CATEGORIES.includes(securityCategory),
+        securityRisk: isSecurityRisk(securityCategory),
         requestId: typeof body.requestId === "string" ? body.requestId : undefined,
       };
     }

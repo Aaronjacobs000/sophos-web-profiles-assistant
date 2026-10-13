@@ -41,7 +41,7 @@ function render(view) {
       </div>
     </section>
     ${view?.summary ? `<section class="panel-card">${summaryHtml(view.summary)}${listsHtml({ ...view, canCreate: connected && status.mode === "tenant" }, "/api/cleaner")}</section>${tableHtml(view.results)}` : ""}
-    <p class="hint">A single-file copy of the paste-and-classify half, which calls Intelix only and needs no server, is built with <code>npm run build:cleaner</code>. It isn't hosted anywhere.</p>
+    <p class="hint">A single-file copy of the paste-and-classify half, which calls Intelix only and needs no server, is built with <code>npm run build:cleaner</code>. Intelix allows the browser calls, so it works opened as a file or from any web server. It isn't hosted anywhere.</p>
   `;
   const textEl = main.querySelector("#text");
   textEl.addEventListener("input", () => (lastText = textEl.value));

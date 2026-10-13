@@ -1,6 +1,6 @@
 // The static page's own code. Uses the inlined library: parseSite,
 // inputsFromText, classify, siteListsFrom, summarise, resultsCsv,
-// siteListCsv, IntelixClient, notWorthLookingUp, DEFAULT_CATALOG,
+// siteListCsv, IntelixClient, worthALookup, DEFAULT_CATALOG,
 // expandPreset, PRESET_LABELS.
 (function () {
   const $ = (id) => document.getElementById(id);
@@ -34,7 +34,7 @@
     for (const input of inputs) {
       const site = parseSite(input.raw);
       let lookup, lookupError;
-      if (intelix && site.value && !notWorthLookingUp(site.host) && !stop) {
+      if (intelix && worthALookup(site) && !stop) {
         const q = site.kind === "url" ? site.value : site.host;
         if (!cache.has(q)) cache.set(q, intelix.lookup(q).then((l) => ({ l }), (e) => ({ e: e.message, status: e.status })));
         const r = await cache.get(q);
@@ -51,7 +51,7 @@
       <div class="lists"><button id="all">All results (CSV)</button>${lists.map((l, i) => `<button data-list="${i}">${esc(l.name)}: ${l.sites.length} (CSV)</button>`).join("")}</div>
       ${leftOut.length ? `<p>${leftOut.length} ${leftOut.length === 1 ? "entry is" : "entries are"} left out of the site list CSVs: broad entries, and entries with different actions. Review them in the results CSV.</p>` : ""}
       <table><thead><tr><th>Site</th><th>Action</th><th>SophosLabs category</th><th>Risk</th><th>Verdict</th><th>Why</th></tr></thead><tbody>${results
-        .map((r) => `<tr><td><b>${esc(r.site.value || r.raw)}</b></td><td>${esc(r.action)}</td><td>${esc(r.categoryLabel || (r.lookup && r.lookup.productivityCategory) || "")}</td><td>${esc((r.lookup && r.lookup.riskLevel) || "")}</td><td class="${r.verdict}">${r.verdict}${r.needsDecision ? " (decide)" : ""}</td><td>${esc(r.reason)}</td></tr>`)
+        .map((r) => `<tr><td><b>${esc(r.site.value || r.raw)}</b></td><td>${esc(r.action)}</td><td>${esc(r.categoryLabel || (r.lookup && r.lookup.productivityCategory) || (r.lookup ? "No category" : ""))}</td><td>${esc((r.lookup && r.lookup.riskLevel) || "")}</td><td class="${r.verdict}">${r.verdict}${r.needsDecision ? " (decide)" : ""}</td><td>${esc(r.reason)}</td></tr>`)
         .join("")}</tbody></table>`;
     $("all").addEventListener("click", () => download("cleanup-results.csv", resultsCsv(results)));
     out.querySelectorAll("[data-list]").forEach((b) => b.addEventListener("click", () => {

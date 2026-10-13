@@ -18,7 +18,7 @@ function card(title, view, mode, active) {
 function intelixHtml(ix) {
   return `<section class="panel-card" id="intelix" style="margin-top:16px">
     <div class="card-head"><h2>SophosLabs Intelix (optional)</h2>${ix.configured ? '<span class="tag tag-ok">Saved</span>' : '<span class="tag tag-muted">Not set</span>'}</div>
-    <p class="card-sub">The clean-up step looks up each site's SophosLabs category with the Intelix URL lookup API. Subscribe to SophosLabs Intelix on AWS Marketplace to get a Client ID and Secret; Intelix bills each lookup (5,000 free a month at the time of writing). Without it, the clean-up still checks DNS and you decide entries by hand.</p>
+    <p class="card-sub">The clean-up step looks up each site's SophosLabs category with the Intelix URL lookup API. Subscribe to SophosLabs Intelix on AWS Marketplace to get a Client ID and Secret; Intelix bills each lookup (5,000 free a month at the time of writing), so the clean-up only looks up entries a policy acts on. A credential works in every region; pick the nearest. Without it, the clean-up still checks DNS and you decide entries by hand.</p>
     ${ix.configured ? `<dl class="kv-list" style="margin-bottom:12px"><dt>Client ID</dt><dd><code>${esc(ix.clientId)}</code></dd><dt>Secret</dt><dd><code>${esc(ix.clientSecretMasked)}</code></dd><dt>Region</dt><dd>${esc(ix.region)}</dd></dl>` : ""}
     <form id="ix" class="cred-form" autocomplete="off" style="max-width:560px">
       <label>Client ID<input type="text" name="clientId" spellcheck="false" /></label>
