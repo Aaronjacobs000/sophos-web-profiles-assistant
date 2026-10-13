@@ -51,6 +51,7 @@ import {
 } from "../domain/design.js";
 import { deviceEligibility } from "../domain/eligibility.js";
 import { DESCRIPTION_MAX, NAME_MAX } from "../domain/cleanup.js";
+import { readOnlyMode } from "../sophos/read-only-guard.js";
 import { compareToSnapshot, planWebsiteManagementRestore, type RestoreStep } from "../domain/restore.js";
 import { buildSnapshot, canonicalJson, type Snapshot } from "../domain/snapshot.js";
 import { readInventory } from "./inventory-reader.js";
@@ -315,7 +316,11 @@ export async function dryRun(dataDir: string, ctx: TenantContext, pilotIn: Pilot
   }
   if (!design.cleanedUp) checks.push({ ok: true, level: "warn", text: "The clean-up step hasn't run, so the site lists hold every entry the policy uses." });
   for (const w of design.warnings) checks.push({ ok: true, level: "warn", text: w });
-  checks.push({ ok: true, level: "ok", text: "Write access is confirmed by the first create; a refusal stops the build before anything else is sent." });
+  checks.push(
+    readOnlyMode()
+      ? { ok: true, level: "warn", text: "Read-only mode is on (READ_ONLY=1): this dry run reads only, and Create would be refused before anything is sent." }
+      : { ok: true, level: "ok", text: "Write access is confirmed by the first create; a refusal stops the build before anything else is sent." },
+  );
 
   return {
     id: randomUUID(),

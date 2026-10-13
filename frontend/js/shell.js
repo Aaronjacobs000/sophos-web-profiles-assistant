@@ -127,7 +127,25 @@ export async function initShell(opts = {}) {
   }
   renderRail(opts);
   renderTopbar(null);
+  if (status?.readOnly) watchReadOnly();
   return status;
+}
+
+// Controls that write to the tenant. In read-only mode they're disabled as soon as a page draws them.
+const WRITE_CONTROLS = "[data-write], #create-lists, #undo-lists, #toggle, #go-retire, [data-rollback], [data-allow], [data-undo], [data-wave], [data-undo-wave], [data-restore], #allow-go";
+
+function lockWriteControls(root = document) {
+  root.querySelectorAll(WRITE_CONTROLS).forEach((el) => {
+    if (el.disabled && el.dataset.readOnly) return;
+    el.disabled = true;
+    el.dataset.readOnly = "1";
+    el.title = "Read-only mode: this would change the tenant";
+  });
+}
+
+function watchReadOnly() {
+  lockWriteControls();
+  new MutationObserver(() => lockWriteControls()).observe(document.body, { childList: true, subtree: true });
 }
 
 /** Shows the tenant in the top bar once the page knows it. */

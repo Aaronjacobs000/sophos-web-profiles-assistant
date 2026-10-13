@@ -5,10 +5,10 @@
  * The SIEM API keeps about 24 hours and gives the action and reason only as
  * free text in the event's name, for example:
  *   'https://example.com/setup.exe' warned due to filetype 'Windows Executable (exe)'
- * That file-type form is the only one seen live (13/10/2026). The parser
- * reads the same shape for category, site list and other reasons, and keeps
- * anything it can't read as "unknown" with the raw text, so a new wording is
- * counted rather than lost.
+ * Seen live (13/10/2026): "warned due to filetype '...'" and
+ * "blocked due to category '...'". The parser reads the same shape for site
+ * lists and other reasons too, and keeps anything it can't read as "unknown"
+ * with the raw text, so a new wording is counted rather than lost.
  *
  * Pure: no Node or browser imports.
  */

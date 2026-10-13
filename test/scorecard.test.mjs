@@ -71,7 +71,7 @@ test("Website Management: unused tags, untagged entries, duplicates, rewrites an
   const wm = sc.facts.websiteManagement;
   assert.equal(wm.entries, 7);
   assert.equal(wm.categoryOverrides, 1);
-  assert.deepEqual(wm.byAction, { allow: 3, block: 1, warn: 0, mixed: 0, none: 3 });
+  assert.deepEqual(wm.byAction, { allow: 3, block: 1, warn: 0, mixed: 0, none: 2, override: 1 }, "an override-only entry still does something");
 });
 
 test("assignments to deleted users and groups, and to empty groups", () => {

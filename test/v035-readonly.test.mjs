@@ -76,3 +76,71 @@ test("WPA_TENANTS limits a partner credential to the listed tenants", () => {
   assert.equal(tenantAllowList({}), null);
   assert.deepEqual([...tenantAllowList({ WPA_TENANTS: " AAAA-1 , bbbb-2,," })], ["aaaa-1", "bbbb-2"]);
 });
+
+// ---- found on a real customer tenant (read-only), rebuilt here with invented data ----
+
+test("an entry that only overrides a category isn't counted as doing nothing", async () => {
+  const { buildScorecard } = await import("../backend/dist/domain/scorecard.js");
+  const { inventory, ok, device } = await import("./fixtures.mjs");
+  const sc = buildScorecard(inventory({
+    localSites: ok([{ id: "o1", url: "www.streaming.example.com", categoryId: 12, tags: ["Old block list"], comment: "ticket 1" }]),
+    endpoints: ok([device("a", "windows", "2026.2.2.1.0"), device("b", "windows", null)]),
+  }));
+  const wm = sc.items.find((i) => i.id === "website-management");
+  assert.match(wm.detail, /1 that works only through a category override/);
+  assert.doesNotMatch(wm.detail, /no policy acts on/);
+  assert.equal(wm.detail, "1 that works only through a category override.");
+  const unused = sc.items.find((i) => i.id === "unused-tags");
+  assert.match(unused.detail, /1 entry also overrides a site's category, which still applies/);
+  assert.match(unused.fix, /Keep or remove the category overrides/);
+  const elig = sc.items.find((i) => i.id === "eligible-partial");
+  assert.ok(elig.evidence.some((e) => e === "B: Windows, no agent version"), elig.evidence.join("; "));
+});
+
+test("the live category wording parses, ampersand and all", async () => {
+  const { parseHit, summarize } = await import("../backend/dist/domain/digest.js");
+  const h = parseHit("'https://translate.example.com/' blocked due to category 'Proxies & Translators'");
+  assert.equal(h.action, "blocked");
+  assert.equal(h.reasonType, "category");
+  assert.equal(h.reasonValue, "Proxies & Translators");
+  const d = summarize([{ id: "1", type: "Event::Endpoint::WebControlViolation", name: "'https://translate.example.com/' blocked due to category 'Proxies & Translators'", created_at: "2026-10-13T01:00:00Z", source: "CORP\\user1", endpoint_id: "e1" }]);
+  assert.deepEqual(d.byReason, [{ reason: "Category: Proxies & Translators", hits: 1 }]);
+});
+
+test("retiring a tag no policy uses doesn't warn about devices on classic settings", async () => {
+  const { mkdtempSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { initState } = await import("../backend/dist/state.js");
+  const { previewRetire } = await import("../backend/dist/services/retire-service.js");
+  const { device, wcPolicy } = await import("./fixtures.mjs");
+  const root = mkdtempSync(path.join(tmpdir(), "wpa-v035-"));
+  await initState(root, "0.3.5");
+  const policies = [wcPolicy({ id: "p1", name: "Base Policy", priority: 0 })];
+  const api = {
+    tenantRequest: async (_t, p, o = {}) => {
+      if ((o.method ?? "GET") !== "GET") throw new Error("no writes");
+      if (p.endsWith("/local-sites")) return { items: [{ id: "s1", url: "www.streaming.example.com", categoryId: 12, tags: ["Old block list"] }], pages: { total: 1 } };
+      if (p === "/endpoint/v1/policies") return { items: o.params.policyType === "web-control" ? policies : [], pages: { total: 1 } };
+      if (p === "/endpoint/v1/endpoints") return { items: [device("old", "windows", "2025.2.3.8.0")], pages: {} };
+      return { items: [], pages: { total: 1 } };
+    },
+  };
+  const ctx = { tenantId: "00000000-0000-4000-a000-000000000001", client: api, summary: { displayName: "Test", region: "us01", apiHost: "x", credentialType: "tenant" } };
+  const unusedTag = await previewRetire(path.join(root, "data"), ctx, ["Old block list"]);
+  assert.deepEqual(unusedTag.warnings, []);
+  policies[0].settings["endpoint.web-control.tags.settings"] = { value: [{ tag: "Old block list", action: "block" }] };
+  const usedTag = await previewRetire(path.join(root, "data"), ctx, ["Old block list"]);
+  assert.match(usedTag.warnings.join(" "), /1 devices can't use profiles/);
+});
+
+test("an override SophosLabs can't categorize carries its own action, with no decision needed", async () => {
+  const { classify } = await import("../backend/dist/domain/cleanup.js");
+  const { DEFAULT_CATALOG } = await import("../backend/dist/domain/categories.js");
+  const input = { id: "1", raw: "www.shop.example.com", categoryId: 53, tags: [], source: "website-management", targets: [{ name: "Base Policy (category override: Weapons)", action: "block", categoryActions: {} }] };
+  const unknown = classify(input, DEFAULT_CATALOG, { lookup: { url: "www.shop.example.com", securityRisk: false } });
+  assert.equal(unknown.verdict, "exception");
+  assert.equal(unknown.needsDecision, false);
+  assert.match(unknown.reason, /puts it in Weapons, which its policy blocks\. SophosLabs has no category for it, so it moves to a Block site list/);
+  const noLookup = classify(input, DEFAULT_CATALOG, {});
+  assert.match(noLookup.reason, /No SophosLabs category was looked up/);
+});

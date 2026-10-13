@@ -2,7 +2,7 @@
 
 A local web tool that takes a Sophos Fusion (formerly Sophos Central) tenant, or a partner's whole estate, from classic Sophos Endpoint Web Control policies and Website Management tags to web filtering profiles and site lists.
 
-> **Unofficial tool, not from Sophos and not supported by Sophos.** It calls the public Sophos Fusion APIs with a credential you supply. Confirm every setting in Sophos Fusion before you change it, and try it on a test tenant first. It has been tested on test tenants only.
+> **Unofficial tool, not from Sophos and not supported by Sophos.** It calls the public Sophos Fusion APIs with a credential you supply. Confirm every setting in Sophos Fusion before you change it, and try it on a test tenant first. Every step has been tested with writes on test tenants. The read-only steps have also been tested on a real customer tenant (see [Testing](#testing)).
 
 ## What it looks like
 
@@ -160,7 +160,7 @@ Rollback deletes by recorded id in reverse order: the policy, then the profile, 
 
 The SIEM API keeps about 24 hours of events, so the digest works from events this computer has collected. Turn on collection on the Pilot page, and the server collects every `SIEM_COLLECT_HOURS` hours (6 by default) while it runs. To collect without the tool open, schedule `npm run collect` at least daily with cron, launchd or Task Scheduler; it collects for every tenant with collection turned on, or for one tenant id you name. A collection resumes from the last cursor when it's under 23 hours old. When more than 24 hours have passed since the last good one, it says events may be missing. Events are kept for 90 days in `data/siem/<tenant>/`, one file a day, without repeats.
 
-Events give the action and reason only as text, for example `'https://example.com/setup.exe' warned due to filetype 'Windows Executable (exe)'`. The digest reads that text into site, action and reason. Text it can't read is counted, not dropped. Only the file type wording has been seen live so far; the category and site list wording the parser also reads is a guess until real events show it. You can import a saved SIEM events response (JSON) as well; imported events are marked and the digest says how many it includes.
+Events give the action and reason only as text, for example `'https://example.com/setup.exe' warned due to filetype 'Windows Executable (exe)'`. The digest reads that text into site, action and reason. Text it can't read is counted, not dropped. The file type and category wording have both been seen in real events ("blocked due to category '...'"); the site list wording the parser also reads hasn't been seen yet. You can import a saved SIEM events response (JSON) as well; imported events are marked and the digest says how many it includes.
 
 Allow adds the exact host (never its parent domain) to a site list kept for the pilot's allows. The first one creates that list, named after the profile, and links it to the pilot's profile as Allow with the highest site list priority, so it wins over the profile's block and warn lists. The profile is sent whole, as the API requires, and read back. Each Allow has a dry run, an audit entry and an undo; undoing the last one unlinks the list and deletes it. Rolling the build back deletes the list too. A file type warning, such as an installer download, isn't a category decision: allowing the host lets every file type from it through.
 
@@ -228,13 +228,19 @@ The server listens on 127.0.0.1:3110, so only this computer can reach it. To ser
 ## Known gaps
 
 - **SophosLabs categories.** The Fusion API returns no SophosLabs category for a site, even though the June 2026 community post promised one. The Category Checker tab shows categories in the Sophos Fusion console, but not through the API. The clean-up uses Intelix instead.
-- **Reports.** There's no Web Control reports API. SIEM events go back about 24 hours and give the action and reason as free text, so the pilot digest has to collect daily and parse the text. The test tenant had no Web Control events, so the digest has run live only on an empty result; its parsing is tested on synthetic events in `test/fixtures/` that copy the live file type wording, plus made-up category and site list events.
+- **Reports.** There's no Web Control reports API. SIEM events go back about 24 hours and give the action and reason as free text, so the pilot digest has to collect daily and parse the text. The digest has run on real Web Control events from a customer tenant, read-only; the tests use synthetic events in `test/fixtures/` that copy the live wording.
 - **Turning the pilot on.** The on and off switch is unit-tested only; the live tests kept the pilot off so no device's browsing changed.
 - **Admin role.** The API can't show an admin's role, so the Manage web profiles check is manual.
 - **Inferred mapping.** "Additional security options" and "Protect against data loss" have no API settings of their own. The tool reads them as classic categories 0, 2, 10 and 54, based on Help wording. Sophos hasn't confirmed this.
 - **User or Device.** The API has no policy type field; a policy is a user or device policy by what it's assigned to. Pick the targets before you build.
-- **Scoring on real estates.** The test tenants have little classic configuration. Thresholds such as "broad" and "shadowed" haven't been tested on a large real-world tenant yet.
+- **Scoring on real estates.** The customer tenant it was tested on had light classic configuration (Base policies and a single Website Management entry), so thresholds such as "broad" and "shadowed" are still untested at scale.
 - **Threat Protection fixes.** The scorecard flags decryption and Block QUIC; the tool doesn't change Threat Protection policies. Turn them on in Sophos Fusion.
+
+## Testing
+
+- **Test tenants, with writes (13/10/2026):** every step end to end, including the build, rollback, narrow Allow, promotion waves and retiring tags with a restore. Each run left the tenant identical to its snapshot.
+- **A real customer tenant, read-only (13/10/2026):** about 430 devices, two Web Control policies, five Threat Protection policies, a Website Management entry and a day of real Web Control events. The run used read-only mode the whole time and changed nothing. It covered the scorecard, snapshot, HTML and PDF report, clean-up with SophosLabs and DNS, the site list cleaner, design, the build dry run, the pilot digest, wave planning, the retire dry run, and an estate scan limited to two tenants.
+- **SophosLabs Intelix, live (13/10/2026):** see [SophosLabs Intelix](#sophoslabs-intelix-optional).
 
 ## Development
 

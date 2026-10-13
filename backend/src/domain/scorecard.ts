@@ -74,7 +74,7 @@ export interface Facts {
     entries: number;
     tags: number;
     categoryOverrides: number;
-    byAction: { allow: number; block: number; warn: number; mixed: number; none: number };
+    byAction: { allow: number; block: number; warn: number; mixed: number; none: number; override: number };
     tagRows: TagRow[];
   } | null;
   profiles: { count: number; limit: number } | null;
@@ -295,7 +295,7 @@ export function buildScorecard(inv: Inventory): Scorecard {
         title: `${plural(e.ineligibleTotal, "device")} can't use profiles yet`,
         detail: `${parts.join(", ")}. A profile policy doesn't apply to them; they fall back to the next Web Control policy that does.`,
         fix: "Keep a classic Web Control policy in place for these devices, and reconfirm agent versions before each wave.",
-        ...evidence(e.ineligible.map((d) => `${d.hostname}: ${d.reason === "macos" ? "macOS" : d.coreAgent ? `Windows, ${d.coreAgent}` : `${d.platform}, no agent version`}`)),
+        ...evidence(e.ineligible.map((d) => `${d.hostname}: ${d.reason === "macos" ? "macOS" : d.coreAgent ? `Windows, ${d.coreAgent}` : `${d.platform === "windows" ? "Windows" : d.platform}, no agent version`}`)),
         evidenceMore: Math.max(0, e.ineligibleTotal - Math.min(e.ineligible.length, MAX_EVIDENCE)) || undefined,
         topic: "Requirements",
       });
@@ -647,14 +647,15 @@ export function buildScorecard(inv: Inventory): Scorecard {
     const tagEntries = new Map<string, number>();
     for (const s of localSites) for (const t of s.tags ?? []) tagEntries.set(t, (tagEntries.get(t) ?? 0) + 1);
 
-    const byAction = { allow: 0, block: 0, warn: 0, mixed: 0, none: 0 };
+    const byAction = { allow: 0, block: 0, warn: 0, mixed: 0, none: 0, override: 0 };
     const broadAllows: string[] = [];
     const rewrite: string[] = [];
     const untagged: string[] = [];
     const seen = new Map<string, number>();
     for (const s of localSites) {
       const actions = new Set((s.tags ?? []).flatMap((t) => (tagActions.get(t) ?? []).map((a) => a.action)));
-      if (actions.size === 0) byAction.none++;
+      // An entry no tag acts on still works if it overrides the site's category.
+      if (actions.size === 0) byAction[s.categoryId !== undefined ? "override" : "none"]++;
       else if (actions.size > 1) byAction.mixed++;
       else byAction[[...actions][0] as "allow" | "block" | "warn"]++;
 
@@ -686,10 +687,11 @@ export function buildScorecard(inv: Inventory): Scorecard {
           byAction.block ? `${byAction.block} block` : "",
           byAction.warn ? `${byAction.warn} warn` : "",
           byAction.mixed ? `${byAction.mixed} with different actions in different policies` : "",
+          byAction.override ? `${byAction.override} that ${byAction.override === 1 ? "works" : "work"} only through a category override` : "",
           byAction.none ? `${byAction.none} that no policy acts on` : "",
         ]
           .filter(Boolean)
-          .join(", ")}${overrides.length ? `. ${plural(overrides.length, "entry", "entries")} override a site's category` : ""}.`,
+          .join(", ")}.`,
         fix: "Check every entry against SophosLabs before you recreate it, and move only real exceptions into site lists. The clean-up step does both.",
         topic: "Website Management",
       });
@@ -712,13 +714,15 @@ export function buildScorecard(inv: Inventory): Scorecard {
     }
     if (unusedTags.length) {
       const unused = new Set(unusedTags);
-      const n = localSites.filter((s) => (s.tags ?? []).some((t) => unused.has(t))).length;
+      const tagged = localSites.filter((s) => (s.tags ?? []).some((t) => unused.has(t)));
+      const n = tagged.length;
+      const withOverride = tagged.filter((s) => s.categoryId !== undefined).length;
       push({
         id: "unused-tags",
         severity: "plan",
         title: `${plural(unusedTags.length, "tag")} on ${plural(n, "entry", "entries")} ${unusedTags.length === 1 ? "isn't" : "aren't"} used by any policy`,
-        detail: "No Web Control policy sets an action for these tags, so their entries do nothing today.",
-        fix: "Delete them. Don't carry them forward.",
+        detail: `No Web Control policy sets an action for ${unusedTags.length === 1 ? "this tag" : "these tags"}, so ${unusedTags.length === 1 ? "it does" : "they do"} nothing today.${withOverride ? ` ${plural(withOverride, "entry also overrides", "entries also override")} a site's category, which still applies.` : ""}`,
+        fix: withOverride ? "Delete the tags. Keep or remove the category overrides on their own merits in the clean-up step." : "Delete them. Don't carry them forward.",
         ...evidence(unusedTags.map((t) => `${t} (${tagEntries.get(t)})`)),
         topic: "Website Management",
       });

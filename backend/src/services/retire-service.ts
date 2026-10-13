@@ -142,9 +142,13 @@ async function warningsFor(ro: TenantApi, t: string, tags: string[], policies: P
       warnings.push(`"${p.name}" still filters with classic settings and uses ${uses.map((u) => `${u.tag} (${u.action})`).join(", ")}; its devices lose these exceptions.`);
     }
   }
-  const devices = await listAllEndpoints(ro, t);
-  const classic = devices.map(deviceEligibility).filter((e) => e.platform !== "linux" && !e.eligible);
-  if (classic.length) warnings.push(`${classic.length} devices can't use profiles and keep classic settings, so any policy that applies to them still uses its tags.`);
+  // Devices on classic settings only matter when some policy still uses the tags.
+  const used = policies.some((p) => p.enabled !== false && (settingValue<TagSetting>(p, TAGS_KEY) ?? []).some((x) => set.has(x.tag)));
+  if (used) {
+    const devices = await listAllEndpoints(ro, t);
+    const classic = devices.map(deviceEligibility).filter((e) => e.platform !== "linux" && !e.eligible);
+    if (classic.length) warnings.push(`${classic.length} devices can't use profiles and keep classic settings, so the policies that use these tags still apply them to those devices.`);
+  }
   return warnings;
 }
 

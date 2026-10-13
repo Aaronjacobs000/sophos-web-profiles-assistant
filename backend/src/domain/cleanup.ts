@@ -86,6 +86,7 @@ function entryAction(targets: CleanupTarget[]): EntryAction {
 }
 
 const VERB: Record<FilterAction, string> = { allow: "allows", block: "blocks", warn: "warns on" };
+const ACTION_WORD_LOWER: Record<FilterAction, string> = { allow: "an Allow", block: "a Block", warn: "a Warn" };
 
 /**
  * Classifies one entry. `seen` holds site values already classified, to catch
@@ -152,6 +153,15 @@ function classifyEntry(
   }
   if (override && CLASSIC_ALWAYS_BLOCKED.has(input.categoryId!) && action === "block") {
     return out("exception", `Website Management puts it in ${override}, which classic always blocks; profiles have no category override, so it moves to a Block site list.`);
+  }
+  // An override says what the admin wanted; without a SophosLabs category to compare, carry it over as it is.
+  if (override && !lookup?.profileCategory) {
+    const what = action === "mixed" ? "which its policies treat differently" : `which ${input.targets.length > 1 ? "its policies" : "its policy"} ${VERB[action]}`;
+    return out(
+      "exception",
+      `Website Management puts it in ${override}, ${what}. ${lookup ? "SophosLabs has no category for it" : "No SophosLabs category was looked up"}, so ${action === "mixed" ? "decide its action" : `it moves to ${ACTION_WORD_LOWER[action]} site list`}.`,
+      action === "mixed",
+    );
   }
   if (!lookup && (site.kind === "cidr4" || site.kind === "cidr6")) {
     return out("exception", "An address range has no SophosLabs category; kept until you decide.", true);
