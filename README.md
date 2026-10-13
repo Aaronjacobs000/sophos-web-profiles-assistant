@@ -203,6 +203,24 @@ Scans read `ESTATE_CONCURRENCY` tenants at once, 4 by default and 8 at most. Eac
 
 `npm run build:cleaner` writes `build/site-list-cleaner.html`: one file, no server and no external files, for the paste-and-classify half of the cleaner. It calls SophosLabs Intelix only, with a credential typed into the page and kept in its memory, and exports the same CSVs. Intelix allows these browser calls, so the page works opened as a file or from any web server (both tested). It has no DNS checks. It isn't hosted anywhere; how it ships is a decision for later.
 
+## Read-only mode and keeping a customer apart
+
+To look at a customer's tenant with no chance of changing it, start the tool with `READ_ONLY=1`. Every request to a Sophos host that isn't a GET is then refused before it leaves the computer, except the two token calls (Sophos ID and SophosLabs Intelix). The Sophos client checks each request, and the process's `fetch` is wrapped as well, so nothing gets past either. The top bar shows Read-only, and any step that would write fails with a clear message. Dry runs, the scorecard, the report, the clean-up, design, the pilot digest and wave planning all still work.
+
+Three more settings help keep a customer's credential and data out of the repo folder:
+
+| Setting | What it does |
+| --- | --- |
+| `WPA_ENV_FILE` | Reads and saves credentials in this file instead of `.env` in the repo folder |
+| `WPA_DATA_DIR` | Keeps snapshots, results, SIEM events, records and the audit log in this folder instead of `data/` |
+| `WPA_TENANTS` | Comma-separated tenant ids. A partner credential then sees only these tenants, in every step and in the estate scan |
+
+For example:
+
+```bash
+READ_ONLY=1 WPA_ENV_FILE=~/secure/customer.env WPA_DATA_DIR=~/secure/customer-data WPA_TENANTS=<tenant id> PORT=3140 npm start
+```
+
 ## Using it from other machines
 
 The server listens on 127.0.0.1:3110, so only this computer can reach it. To serve other machines, set `HOST` (for example `0.0.0.0`) and limit clients with `ALLOWED_IPS`. The Host and Origin guard refuses requests that name another host, and refuses changes from other pages. See `.env.example`.

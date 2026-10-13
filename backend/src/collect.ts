@@ -11,12 +11,14 @@ import path from "node:path";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
-import { contextFor, initState } from "./state.js";
+import { contextFor, initState, storagePaths } from "./state.js";
+import { installFetchGuard, readOnlyMode } from "./sophos/read-only-guard.js";
 import { collect, enabledTenants } from "./services/siem-store.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const VERSION = (JSON.parse(readFileSync(path.join(REPO_ROOT, "package.json"), "utf8")) as { version: string }).version;
-dotenv.config({ path: path.join(REPO_ROOT, ".env"), quiet: true });
+dotenv.config({ path: storagePaths(REPO_ROOT).envPath, quiet: true });
+if (readOnlyMode()) installFetchGuard();
 
 async function main(): Promise<number> {
   const state = await initState(REPO_ROOT, VERSION);

@@ -99,8 +99,12 @@ export async function promotionView(dataDir: string, ctx: TenantContext, waveSiz
   const t = ctx.tenantId;
   const pilot = await activePilot(dataDir, t);
   const waves = (await load(dataDir, t)).waves;
-  if (!pilot) return { pilot, policy: null, mode: "none", plan: null, waves, problem: "There's no pilot yet. Build one in the Build step first." };
   const ro = new ReadOnlyApi(ctx.client);
+  if (!pilot) {
+    // No pilot yet: still show how the devices would split into waves, for planning.
+    const devices = await listAllEndpoints(ro, t);
+    return { pilot, policy: null, mode: "none", plan: planWaves(devices, [], waveSize, "computer"), waves, problem: "There's no pilot yet, so these waves are a plan only. Build one in the Build step to move devices." };
+  }
   const [policy, devices] = await Promise.all([getPolicy(ro, t, pilot.policyId), listAllEndpoints(ro, t)]);
   const a = policy.appliesTo ?? {};
   const users = (a.users?.length ?? 0) + (a.userGroups?.length ?? 0);

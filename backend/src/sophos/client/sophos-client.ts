@@ -18,6 +18,7 @@
  * (tenantRequest) and global/partner-scoped requests (globalRequest).
  */
 
+import { guardRequest } from "../read-only-guard.js";
 import type { TokenManager } from "../auth/token-manager.js";
 import type { TenantResolver } from "./tenant-resolver.js";
 import type { SophosApiError } from "../types/sophos.js";
@@ -176,6 +177,8 @@ export class SophosClient {
     attempts = 3,
   ): Promise<T> {
     const method = String(options.method ?? "GET").toUpperCase();
+    // Read-only mode refuses a write here, before anything is sent.
+    guardRequest(url, method);
     const isRead = method === "GET";
     let lastError: Error | null = null;
 

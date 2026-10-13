@@ -20,7 +20,8 @@ import { convertRouter } from "./routes/convert.js";
 import { pilotRouter } from "./routes/pilot.js";
 import { siemCollectHours } from "./config/validate.js";
 import { startCollector } from "./services/siem-store.js";
-import { contextFor } from "./state.js";
+import { contextFor, storagePaths } from "./state.js";
+import { installFetchGuard, readOnlyMode } from "./sophos/read-only-guard.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -30,7 +31,10 @@ const VERSION = (JSON.parse(readFileSync(path.join(REPO_ROOT, "package.json"), "
 export const DEFAULT_PORT = 3110;
 
 // A missing .env is fine: the server starts unconfigured and the setup wizard takes over.
-dotenv.config({ path: path.join(REPO_ROOT, ".env"), quiet: true });
+// WPA_ENV_FILE keeps a credential outside the repo folder.
+dotenv.config({ path: storagePaths(REPO_ROOT).envPath, quiet: true });
+// READ_ONLY=1: refuse every write to Sophos before it leaves this computer.
+if (readOnlyMode()) installFetchGuard();
 
 function readNetworkSettings(): NetworkSettings {
   try {
@@ -103,7 +107,8 @@ async function main() {
   try {
     app
       .listen(PORT, HOST, () => {
-        log.info(`Web Profiles Assistant ${VERSION} listening on ${addressUrl(HOST, PORT)} (repo: ${REPO_ROOT})`);
+        log.info(`Web Profiles Assistant ${VERSION} listening on ${addressUrl(HOST, PORT)} (repo: ${REPO_ROOT}, data: ${state.dataDir})`);
+        if (readOnlyMode()) log.info("Read-only mode: every write to Sophos is refused before it is sent (READ_ONLY=1).");
         logNetwork(network, PORT);
       })
       .on("error", stop);

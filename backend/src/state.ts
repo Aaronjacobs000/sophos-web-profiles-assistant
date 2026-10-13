@@ -23,6 +23,7 @@ import {
   type TenantSummary,
 } from "./sophos/tenant-context.js";
 import { log } from "./log.js";
+import { readOnlyMode } from "./sophos/read-only-guard.js";
 
 export type AppStatus = "unconfigured" | "configured-invalid" | "configured-ok";
 
@@ -47,6 +48,8 @@ export interface StatusPayload {
   /** Partner mode: who the credential is and how many tenants it reaches. */
   partner: { id: string; idType: string; label: string | null; tenantCount: number } | null;
   version: string;
+  /** READ_ONLY=1: every write to Sophos is refused before it's sent. */
+  readOnly: boolean;
 }
 
 let state: AppState | null = null;
@@ -57,14 +60,32 @@ export function getState(): AppState {
   return state;
 }
 
+/**
+ * Where the credentials and data live: .env and data/ in the repo folder, or
+ * WPA_ENV_FILE and WPA_DATA_DIR, so a customer's credential and data can be
+ * kept apart from the repo.
+ */
+export function storagePaths(repoRoot: string, env: NodeJS.ProcessEnv = process.env): { envPath: string; dataDir: string } {
+  return {
+    envPath: env.WPA_ENV_FILE?.trim() ? path.resolve(env.WPA_ENV_FILE.trim()) : path.join(repoRoot, ".env"),
+    dataDir: env.WPA_DATA_DIR?.trim() ? path.resolve(env.WPA_DATA_DIR.trim()) : path.join(repoRoot, "data"),
+  };
+}
+
+/** WPA_TENANTS: tenant ids a partner credential may use. Empty means every tenant it manages. */
+export function tenantAllowList(env: NodeJS.ProcessEnv = process.env): Set<string> | null {
+  const ids = (env.WPA_TENANTS ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  return ids.length ? new Set(ids) : null;
+}
+
 export async function initState(repoRoot: string, appVersion: string): Promise<AppState> {
   version = appVersion;
-  const envPath = path.join(repoRoot, ".env");
+  const { envPath, dataDir } = storagePaths(repoRoot);
   const envFile = await readEnvFile(envPath);
   applyEnvToProcess(envFile, MANAGED_ENV_KEYS as unknown as string[]);
   state = {
     repoRoot,
-    dataDir: path.join(repoRoot, "data"),
+    dataDir,
     envPath,
     envFile,
     status: "unconfigured",
@@ -100,6 +121,11 @@ export async function rebuildContexts(): Promise<void> {
   try {
     if (st.mode === "partner") {
       st.partner = await createPartnerContext(creds);
+      const allow = tenantAllowList();
+      if (allow) {
+        st.partner.tenants = st.partner.tenants.filter((t) => allow.has(t.id.toLowerCase()));
+        log.info(`[state] WPA_TENANTS limits this partner credential to ${st.partner.tenants.length} of ${allow.size} listed tenants`);
+      }
       log.info(`[state] configured-ok mode=partner tenants=${st.partner.tenants.length}`);
     } else {
       st.tenant = await createTenantContext(creds);
@@ -144,6 +170,7 @@ export function getStatusPayload(): StatusPayload {
         }
       : null,
     version,
+    readOnly: readOnlyMode(),
   };
 }
 

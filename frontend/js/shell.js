@@ -96,6 +96,7 @@ function renderTopbar(tenantInfo) {
   mount.innerHTML = `
     <div class="route">${chips.join("")}</div>
     <span class="topbar-spacer"></span>
+    ${status?.readOnly ? `<span class="tag tag-warn" title="READ_ONLY=1: every write to Sophos is refused before it is sent">Read-only</span>` : ""}
     ${status ? `<span class="tag tag-muted" title="Credential mode">${status.mode === "partner" ? "Partner mode" : "Tenant mode"}</span>` : ""}
     ${status?.version ? `<span class="tag tag-muted tag-mono">v${esc(status.version)}</span>` : ""}
   `;
