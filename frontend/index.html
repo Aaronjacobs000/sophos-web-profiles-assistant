@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Web Profiles Assistant</title>
+  <link rel="icon" href="/mark.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/css/base.css" />
+  <link rel="stylesheet" href="/css/components.css" />
+  <link rel="stylesheet" href="/css/app.css" />
+</head>
+<body class="welcome-body">
+  <div class="bg" aria-hidden="true"><div class="bg-glow bg-glow-a"></div><div class="bg-glow bg-glow-b"></div><div class="bg-glow bg-glow-c"></div><div class="bg-noise"></div></div>
+  <main class="welcome-shell"><p class="running-line"><span class="spinner"></span>Opening</p></main>
+  <script type="module">
+    // Where to start: setup, the estate (partner credential) or the one tenant.
+    import { api } from "/js/api.js";
+    try {
+      const s = await api.get("/api/status");
+      if (s.status !== "configured-ok") location.replace(s.status === "unconfigured" ? "/welcome.html" : "/credentials.html");
+      else if (s.mode === "partner") location.replace("/estate.html");
+      else location.replace(`/readiness.html?tenant=${encodeURIComponent(s.tenant.tenantId)}`);
+    } catch {
+      location.replace("/welcome.html");
+    }
+  </script>
+</body>
+</html>

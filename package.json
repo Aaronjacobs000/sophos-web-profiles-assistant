@@ -1,0 +1,36 @@
+{
+  "name": "web-profiles-assistant",
+  "version": "0.3.2",
+  "description": "Unofficial, locally run web tool that checks a Sophos Fusion tenant, or a partner's whole estate, for the move from classic Web Control policies and Website Management tags to web filtering profiles and site lists.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Aaronjacobs000/sophos-web-profiles-assistant.git"
+  },
+  "homepage": "https://github.com/Aaronjacobs000/sophos-web-profiles-assistant#readme",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "start": "node backend/dist/server.js",
+    "dev": "tsc --watch & node --watch backend/dist/server.js",
+    "clean": "rimraf backend/dist",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "build:cleaner": "npm run build && node scripts/build-static-cleaner.mjs",
+    "collect": "node backend/dist/collect.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.9.0",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.6.3"
+  }
+}

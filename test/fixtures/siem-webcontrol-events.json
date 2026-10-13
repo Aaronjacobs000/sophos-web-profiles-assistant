@@ -1,0 +1,375 @@
+{
+ "note": "Synthetic events for the pilot digest tests, in the shape of Event::Endpoint::WebControlViolation events from the SIEM API. The file type wording (\"warned due to filetype ...\") matches what the API returned on 13/10/2026; the category and site list wording is made up. Every id, user, host, device and address is invented. The last event isn't a web event and must be ignored.",
+ "has_more": false,
+ "items": [
+  {
+   "id": "b5413ebf-3fff-53b9-986e-5d40344914a6",
+   "type": "Event::Endpoint::WebControlViolation",
+   "name": "'https://downloads.example-browser.com/release/win/x64/browser_installer-x64.exe' warned due to filetype 'Windows Executable (exe)'",
+   "severity": "low",
+   "created_at": "2026-10-12T02:43:16.329Z",
+   "when": "2026-10-12T02:43:15.000Z",
+   "endpoint_id": "a583ac76-117e-59ee-bb27-5d2e9ed12dda",
+   "endpoint_type": "computer",
+   "location": "PC-01",
+   "source": "PC-01\\user1",
+   "user_id": "000000000000000000000001",
+   "customer_id": "48116108-9213-58d2-b4b2-f76500f18d7e",
+   "source_info": {
+    "ip": "192.0.2.10"
+   },
+   "group": "WEB",
+   "threat": null,
+   "origin": null
+  },
+  {
+   "id": "58516ef0-b265-5f90-9851-a5f81968ed93",
+   "type": "Event::Endpoint::WebControlViolation",
+   "name": "'https://downloads-alt.example-browser.net/release/win/x64/browser_installer-x64.exe' warned due to filetype 'Windows Executable (exe)'",
+   "severity": "low",
+   "created_at": "2026-10-12T02:43:21.404Z",
+   "when": "2026-10-12T02:43:16.000Z",
+   "endpoint_id": "a583ac76-117e-59ee-bb27-5d2e9ed12dda",
+   "endpoint_type": "computer",
+   "location": "PC-01",
+   "source": "PC-01\\user1",
+   "user_id": "000000000000000000000001",
+   "customer_id": "48116108-9213-58d2-b4b2-f76500f18d7e",
+   "source_info": {
+    "ip": "192.0.2.10"
+   },
+   "group": "WEB",
+   "threat": null,
+   "origin": null
+  },
+  {
+   "id": "016d8e86-9680-5a50-a9b0-34005b6a3fbb",
+   "type": "Event::Endpoint::WebControlViolation",
+   "name": "'https://downloads.example-browser.com/release/win/x64/browser_installer-x64.exe' warned due to filetype 'Windows Executable (exe)'",
+   "severity": "low",
+   "created_at": "2026-10-12T07:44:04.725Z",
+   "when": "2026-10-12T07:44:04.000Z",
+   "endpoint_id": "a583ac76-117e-59ee-bb27-5d2e9ed12dda",
+   "endpoint_type": "computer",
+   "location": "PC-01",
+   "source": "PC-01\\user1",
+   "user_id": "000000000000000000000001",
+   "customer_id": "48116108-9213-58d2-b4b2-f76500f18d7e",
+   "source_info": {
+    "ip": "192.0.2.10"
+   },
+   "group": "WEB",
+   "threat": null,
+   "origin": null
+  },
+  {
+   "id": "bc96b2a2-eba4-5e9f-b437-87bad83ef8a3",
+   "type": "Event::Endpoint::WebControlViolation",
+   "name": "'https://downloads-alt.example-browser.net/release/win/x64/browser_installer-x64.exe' warned due to filetype 'Windows Executable (exe)'",
+   "severity": "low",
+   "created_at": "2026-10-12T07:44:09.793Z",
+   "when": "2026-10-12T07:44:06.000Z",
+   "endpoint_id": "a583ac76-117e-59ee-bb27-5d2e9ed12dda",
+   "endpoint_type": "computer",
+   "location": "PC-01",
+   "source": "PC-01\\user1",
+   "user_id": "000000000000000000000001",
+   "customer_id": "48116108-9213-58d2-b4b2-f76500f18d7e",
+   "source_info": {
+    "ip": "192.0.2.10"
+   },
+   "group": "WEB",
+   "threat": null,
+   "origin": null
+  },
+  {
+   "id": "7f5f6e3a-e6cb-566a-b0b0-dd7af6bee2a4",
+   "type": "Event::Endpoint::WebControlViolation",
+   "name": "'https://downloads.example-browser.com/release/win/x64/browser_installer-x64.exe' warned due to filetype 'Windows Executable (exe)'",
+   "severity": "low",
+   "created_at": "2026-10-12T08:38:36.359Z",
+   "when": "2026-10-12T08:38:35.000Z",
+   "endpoint_id": "953c7ff7-8faa-520f-8d3a-db2cb2e127a8",
+   "endpoint_type": "computer",
+   "location": "PC-02",
+   "source": "PC-02\\user2",
+   "user_id": "000000000000000000000002",
+   "customer_id": "48116108-9213-58d2-b4b2-f76500f18d7e",
+   "source_info": {
+    "ip": "192.0.2.11"
+   },
+   "group": "WEB",
+   "threat": null,
+   "origin": null
+  },
+  {
+   "id": "79c3b31c-a462-5421-a8bc-06c4cad1f388",
+   "type": "Event::Endpoint::WebControlViolation",
+   "name": "'https://downloads-alt.example-browser.net/release/win/x64/browser_installer-x64.exe' warned due to filetype 'Windows Executable (exe)'",
+   "severity": "low",
+   "created_at": "2026-10-12T08:38:41.457Z",
+   "when": "2026-10-12T08:38:36.000Z",
+   "endpoint_id": "953c7ff7-8faa-520f-8d3a-db2cb2e127a8",
+   "endpoint_type": "computer",
+   "location": "PC-02",
+   "source": "PC-02\\user2",
+   "user_id": "000000000000000000000002",
+   "customer_id": "48116108-9213-58d2-b4b2-f76500f18d7e",
+   "source_info": {
+    "ip": "192.0.2.11"
+   },
+   "group": "WEB",
+   "threat": null,
+   "origin": null
+  },
+  {
+   "id": "6a7ded6e-c528-5b82-af3b-a58cac3fd5d1",
+   "type": "Event::Endpoint::WebControlViolation",
+   "name": "'https://downloads.example-browser.com/release/win/x64/browser_installer-x64.exe' warned due to filetype 'Windows Executable (exe)'",
+   "severity": "low",
+   "created_at": "2026-10-12T14:09:52.722Z",
+   "when": "2026-10-12T14:09:52.722Z",
+   "endpoint_id": "a583ac76-117e-59ee-bb27-5d2e9ed12dda",
+   "endpoint_type": "computer",
+   "location": "PC-01",
+   "source": "PC-01\\user1",
+   "user_id": "000000000000000000000001",
+   "customer_id": "48116108-9213-58d2-b4b2-f76500f18d7e",
+   "source_info": {
+    "ip": "192.0.2.10"
+   },
+   "group": "WEB",
+   "threat": null,
+   "origin": null
+  },
+  {
+   "id": "701649e3-a528-529e-97dd-2231b33bc0f3",
+   "type": "Event::Endpoint::WebControlViolation",
+   "name": "'https://downloads-alt.example-browser.net/release/win/x64/browser_installer-x64.exe' warned due to filetype 'Windows Executable (exe)'",
+   "severity": "low",
+   "created_at": "2026-10-12T14:09:57.778Z",
+   "when": "2026-10-12T14:09:54.000Z",
+   "endpoint_id": "a583ac76-117e-59ee-bb27-5d2e9ed12dda",
+   "endpoint_type": "computer",
+   "location": "PC-01",
+   "source": "PC-01\\user1",
+   "user_id": "000000000000000000000001",
+   "customer_id": "48116108-9213-58d2-b4b2-f76500f18d7e",
+   "source_info": {
+    "ip": "192.0.2.10"
+   },
+   "group": "WEB",
+   "threat": null,
+   "origin": null
+  },
+  {
+   "id": "48e3c8df-2470-5455-9492-b4fb2d945909",
+   "type": "Event::Endpoint::WebControlViolation",
+   "name": "'https://downloads.example-browser.com/release/win/x64/browser_installer-x64.exe' warned due to filetype 'Windows Executable (exe)'",
+   "severity": "low",
+   "created_at": "2026-10-12T21:04:59.390Z",
+   "when": "2026-10-12T21:04:59.389Z",
+   "endpoint_id": "a583ac76-117e-59ee-bb27-5d2e9ed12dda",
+   "endpoint_type": "computer",
+   "location": "PC-01",
+   "source": "PC-01\\user1",
+   "user_id": "000000000000000000000001",
+   "customer_id": "48116108-9213-58d2-b4b2-f76500f18d7e",
+   "source_info": {
+    "ip": "192.0.2.10"
+   },
+   "group": "WEB",
+   "threat": null,
+   "origin": null
+  },
+  {
+   "id": "5ad5c3f9-b8f3-5f32-bf76-8d361b4ef92c",
+   "type": "Event::Endpoint::WebControlViolation",
+   "name": "'https://downloads-alt.example-browser.net/release/win/x64/browser_installer-x64.exe' warned due to filetype 'Windows Executable (exe)'",
+   "severity": "low",
+   "created_at": "2026-10-12T21:05:04.465Z",
+   "when": "2026-10-12T21:05:01.000Z",
+   "endpoint_id": "a583ac76-117e-59ee-bb27-5d2e9ed12dda",
+   "endpoint_type": "computer",
+   "location": "PC-01",
+   "source": "PC-01\\user1",
+   "user_id": "000000000000000000000001",
+   "customer_id": "48116108-9213-58d2-b4b2-f76500f18d7e",
+   "source_info": {
+    "ip": "192.0.2.10"
+   },
+   "group": "WEB",
+   "threat": null,
+   "origin": null
+  },
+  {
+   "id": "d18cdf00-3893-5993-979f-9e622c9bbf1b",
+   "type": "Event::Endpoint::WebControlViolation",
+   "name": "'https://downloads.example-browser.com/release/win/x64/browser_installer-x64.exe' warned due to filetype 'Windows Executable (exe)'",
+   "severity": "low",
+   "created_at": "2026-10-12T22:20:02.503Z",
+   "when": "2026-10-12T22:20:01.000Z",
+   "endpoint_id": "953c7ff7-8faa-520f-8d3a-db2cb2e127a8",
+   "endpoint_type": "computer",
+   "location": "PC-02",
+   "source": "PC-02\\user2",
+   "user_id": "000000000000000000000002",
+   "customer_id": "48116108-9213-58d2-b4b2-f76500f18d7e",
+   "source_info": {
+    "ip": "192.0.2.11"
+   },
+   "group": "WEB",
+   "threat": null,
+   "origin": null
+  },
+  {
+   "id": "26bbe8a6-fdd4-578d-ab14-0a2d28e28cf9",
+   "type": "Event::Endpoint::WebControlViolation",
+   "name": "'https://downloads-alt.example-browser.net/release/win/x64/browser_installer-x64.exe' warned due to filetype 'Windows Executable (exe)'",
+   "severity": "low",
+   "created_at": "2026-10-12T22:20:07.675Z",
+   "when": "2026-10-12T22:20:02.000Z",
+   "endpoint_id": "953c7ff7-8faa-520f-8d3a-db2cb2e127a8",
+   "endpoint_type": "computer",
+   "location": "PC-02",
+   "source": "PC-02\\user2",
+   "user_id": "000000000000000000000002",
+   "customer_id": "48116108-9213-58d2-b4b2-f76500f18d7e",
+   "source_info": {
+    "ip": "192.0.2.11"
+   },
+   "group": "WEB",
+   "threat": null,
+   "origin": null
+  },
+  {
+   "id": "b12c3e25-cfc4-5340-be82-f11c65ef4155",
+   "type": "Event::Endpoint::WebControlViolation",
+   "name": "'https://www.casino-example.com/' blocked due to category 'Gambling'",
+   "severity": "low",
+   "created_at": "2026-10-13T00:12:04.000Z",
+   "when": "2026-10-13T00:12:04.000Z",
+   "endpoint_id": "a583ac76-117e-59ee-bb27-5d2e9ed12dda",
+   "endpoint_type": "computer",
+   "location": "PC-01",
+   "source": "PC-01\\user1",
+   "user_id": "000000000000000000000001",
+   "customer_id": "48116108-9213-58d2-b4b2-f76500f18d7e",
+   "source_info": {
+    "ip": "192.0.2.10"
+   },
+   "group": "WEB",
+   "threat": null,
+   "origin": null
+  },
+  {
+   "id": "5b4f9be7-0906-5cdd-9af5-da0717a3c296",
+   "type": "Event::Endpoint::WebControlViolation",
+   "name": "'https://www.casino-example.com/lobby' blocked due to category 'Gambling'",
+   "severity": "low",
+   "created_at": "2026-10-13T00:12:09.000Z",
+   "when": "2026-10-13T00:12:09.000Z",
+   "endpoint_id": "a583ac76-117e-59ee-bb27-5d2e9ed12dda",
+   "endpoint_type": "computer",
+   "location": "PC-01",
+   "source": "PC-01\\user1",
+   "user_id": "000000000000000000000001",
+   "customer_id": "48116108-9213-58d2-b4b2-f76500f18d7e",
+   "source_info": {
+    "ip": "192.0.2.10"
+   },
+   "group": "WEB",
+   "threat": null,
+   "origin": null
+  },
+  {
+   "id": "3bcf2833-afe5-521e-96b3-59c97946e48c",
+   "type": "Event::Endpoint::WebControlViolation",
+   "name": "'https://chat.genai-example.com/' warned due to category 'Generative AI'",
+   "severity": "low",
+   "created_at": "2026-10-13T01:40:31.000Z",
+   "when": "2026-10-13T01:40:31.000Z",
+   "endpoint_id": "953c7ff7-8faa-520f-8d3a-db2cb2e127a8",
+   "endpoint_type": "computer",
+   "location": "PC-02",
+   "source": "PC-02\\user2",
+   "user_id": "000000000000000000000002",
+   "customer_id": "48116108-9213-58d2-b4b2-f76500f18d7e",
+   "source_info": {
+    "ip": "192.0.2.11"
+   },
+   "group": "WEB",
+   "threat": null,
+   "origin": null
+  },
+  {
+   "id": "90b166b8-08ee-5aa1-a529-71eae5e79621",
+   "type": "Event::Endpoint::WebControlViolation",
+   "name": "'https://chat.genai-example.com/c/1' warned due to category 'Generative AI'",
+   "severity": "low",
+   "created_at": "2026-10-13T01:41:02.000Z",
+   "when": "2026-10-13T01:41:02.000Z",
+   "endpoint_id": "953c7ff7-8faa-520f-8d3a-db2cb2e127a8",
+   "endpoint_type": "computer",
+   "location": "PC-02",
+   "source": "PC-02\\user2",
+   "user_id": "000000000000000000000002",
+   "customer_id": "48116108-9213-58d2-b4b2-f76500f18d7e",
+   "source_info": {
+    "ip": "192.0.2.11"
+   },
+   "group": "WEB",
+   "threat": null,
+   "origin": null
+  },
+  {
+   "id": "bc41849b-450c-58da-8ec4-6d5f66ef1cdb",
+   "type": "Event::Endpoint::WebControlViolation",
+   "name": "'https://files.share-example.net/d/abc' blocked due to site list 'Pilot block list'",
+   "severity": "low",
+   "created_at": "2026-10-13T02:05:47.000Z",
+   "when": "2026-10-13T02:05:47.000Z",
+   "endpoint_id": "a583ac76-117e-59ee-bb27-5d2e9ed12dda",
+   "endpoint_type": "computer",
+   "location": "PC-01",
+   "source": "PC-01\\user1",
+   "user_id": "000000000000000000000001",
+   "customer_id": "48116108-9213-58d2-b4b2-f76500f18d7e",
+   "source_info": {
+    "ip": "192.0.2.10"
+   },
+   "group": "WEB",
+   "threat": null,
+   "origin": null
+  },
+  {
+   "id": "25f612da-5f4b-57a6-9817-e5694939008f",
+   "type": "Event::Endpoint::WebControlViolation",
+   "name": "'https://torrent-example.org/' blocked due to category 'Peer-to-peer and torrents'",
+   "severity": "low",
+   "created_at": "2026-10-13T02:20:11.000Z",
+   "when": "2026-10-13T02:20:11.000Z",
+   "endpoint_id": "953c7ff7-8faa-520f-8d3a-db2cb2e127a8",
+   "endpoint_type": "computer",
+   "location": "PC-02",
+   "source": "PC-02\\user2",
+   "user_id": "000000000000000000000002",
+   "customer_id": "48116108-9213-58d2-b4b2-f76500f18d7e",
+   "source_info": {
+    "ip": "192.0.2.11"
+   },
+   "group": "WEB",
+   "threat": null,
+   "origin": null
+  },
+  {
+   "id": "38ce40cf-193b-55fe-9949-8dba939d1aec",
+   "type": "Event::Endpoint::Application::Allowed",
+   "name": "Not a web event",
+   "created_at": "2026-10-13T03:00:00.000Z",
+   "when": "2026-10-13T03:00:00.000Z",
+   "endpoint_id": "a583ac76-117e-59ee-bb27-5d2e9ed12dda",
+   "group": "APPLICATION_CONTROL"
+  }
+ ]
+}

@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Set up · Web Profiles Assistant</title>
+  <link rel="icon" href="/mark.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/css/base.css" />
+  <link rel="stylesheet" href="/css/components.css" />
+  <link rel="stylesheet" href="/css/app.css" />
+</head>
+<body class="welcome-body">
+  <div class="bg" aria-hidden="true"><div class="bg-glow bg-glow-a"></div><div class="bg-glow bg-glow-b"></div><div class="bg-glow bg-glow-c"></div><div class="bg-noise"></div></div>
+  <div class="welcome-shell">
+    <div class="welcome-logo"><span id="logo"></span><span class="welcome-wordmark">Web Profiles Assistant</span></div>
+
+    <main class="welcome-card">
+      <div class="welcome-card-body">
+        <header class="welcome-header">
+          <h1>Check a tenant before you move to web filtering profiles</h1>
+          <p class="tagline">Connect with a Sophos Fusion API credential. This version only reads: nothing in a tenant changes.</p>
+          <p class="unofficial-note">Unofficial tool, not from Sophos. It calls the public Sophos Fusion APIs with the credential you give it, and keeps that credential in a .env file on this computer.</p>
+        </header>
+
+        <ol class="wizard-steps" id="wizard-steps">
+          <li data-step="1" class="active">1. Who you are</li>
+          <li data-step="2">2. Credential</li>
+          <li data-step="3">3. Check it</li>
+        </ol>
+
+        <section class="wizard-panel" data-step="1">
+          <h2>How will you connect?</h2>
+          <div class="mode-picker">
+            <label class="mode-option">
+              <input type="radio" name="mode" value="tenant" checked />
+              <div class="mode-card">
+                <strong>One tenant (customers)</strong>
+                <p>A tenant API credential. Create it in Sophos Fusion under Global Settings, API Credentials. A read-only role is enough for this version.</p>
+              </div>
+            </label>
+            <label class="mode-option">
+              <input type="radio" name="mode" value="partner" />
+              <div class="mode-card">
+                <strong>Partner or organization (estates)</strong>
+                <p>A partner or enterprise API credential that reaches many tenants. You get a scorecard for every tenant and can open any one of them.</p>
+              </div>
+            </label>
+          </div>
+          <div class="wizard-actions">
+            <button id="to-2" class="btn btn-primary">Continue</button>
+          </div>
+        </section>
+
+        <section class="wizard-panel hidden" data-step="2">
+          <h2 id="cred-title">Tenant API credential</h2>
+          <p id="cred-help">Paste the Client ID and Client Secret. The secret is stored only in .env on this computer.</p>
+          <form id="cred-form" class="cred-form" autocomplete="off">
+            <label id="label-row">Name to show <span class="hint">(the API doesn't return a tenant's name to a tenant credential)</span>
+              <input type="text" name="label" spellcheck="false" placeholder="Contoso Legal" />
+            </label>
+            <label>Client ID
+              <input type="text" name="clientId" spellcheck="false" required />
+            </label>
+            <label>Client Secret
+              <div class="input-with-button"><input type="password" name="clientSecret" required /><button type="button" class="icon-btn reveal-btn" aria-label="Show secret" title="Show secret"><span data-icon="eye"></span></button></div>
+            </label>
+          </form>
+          <div class="test-result" id="test-result"></div>
+          <div class="wizard-actions">
+            <button class="btn" data-back="1">Back</button>
+            <button id="test" class="btn">Test connection</button>
+            <button id="to-3" class="btn btn-primary" disabled>Continue</button>
+          </div>
+        </section>
+
+        <section class="wizard-panel hidden" data-step="3">
+          <h2>Ready</h2>
+          <div class="review-summary" id="review"></div>
+          <details class="review-card" style="margin-top:12px">
+            <summary style="cursor:pointer;font-weight:600;color:var(--ink-1)">SophosLabs Intelix for the clean-up step (optional)</summary>
+            <p class="hint" style="margin-top:8px">Intelix looks up each legacy entry's SophosLabs category. It's a separate subscription on AWS Marketplace, billed per lookup. Skip this and add it later on the Credentials page if you like.</p>
+            <form id="ix-form" class="cred-form" autocomplete="off">
+              <label>Intelix Client ID<input type="text" name="ixId" spellcheck="false" /></label>
+              <label>Intelix Client Secret<input type="password" name="ixSecret" /></label>
+              <label>Region<select name="ixRegion"><option value="au">au (Australia)</option><option value="us">us</option><option value="de">de</option></select></label>
+            </form>
+          </details>
+          <p class="hint">Saving writes the credentials to .env and connects. You can change them later on the Credentials page.</p>
+          <div class="wizard-actions">
+            <button class="btn" data-back="2">Back</button>
+            <button id="save" class="btn btn-primary">Save and open</button>
+          </div>
+        </section>
+      </div>
+    </main>
+    <footer class="page-footer"><p>Unofficial tool, not from Sophos and not supported by Sophos.</p></footer>
+  </div>
+  <script type="module" src="/js/page-welcome.js"></script>
+</body>
+</html>

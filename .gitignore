@@ -1,0 +1,27 @@
+# Environment & secrets
+.env
+.env.local
+# Temp copies left by an interrupted .env save hold the same secrets
+..env.*.tmp
+
+# Runtime state
+data/
+*.log
+
+# Build output
+backend/dist/
+# The static site list cleaner is built on demand and never published
+build/
+
+# Dependencies
+node_modules/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Claude Code local config
+.claude/

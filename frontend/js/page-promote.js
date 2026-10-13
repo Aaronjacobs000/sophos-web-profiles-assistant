@@ -1,0 +1,246 @@
+// Promote and retire: move devices that can use profiles onto the
+// pilot one wave at a time, then retire Website Management tags last, with
+// a restore from the record and a comparison with the snapshot.
+
+import { api } from "./api.js";
+import { currentTenantId, getStatus, initShell, setTenant } from "./shell.js";
+import { esc, escAttr, plural } from "./ui.js";
+import { icon } from "./icons.js";
+import { toast } from "./toast.js";
+import { diffHtml } from "./diff-view.js";
+
+const main = document.getElementById("main");
+let tenantId = null;
+let promo = null;
+let retire = null;
+let waveSize = 25;
+let retirePlan = null;
+let chosenTags = [];
+let diff = null;
+
+const n = (x) => Number(x ?? 0).toLocaleString("en-US");
+const when = (iso) => (iso ? new Date(iso).toLocaleString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "");
+const REASON = { "windows-old-agent": "Windows below 2026.1", "windows-no-agent-version": "no agent version", macos: "macOS", other: "other platform", server: "server: needs a server Web Control policy", computer: "computer: needs a Web Control policy" };
+const WAVE_STATUS = { moved: '<span class="tag tag-ok">Moved</span>', undone: '<span class="tag tag-muted">Undone</span>', failed: '<span class="tag tag-bad">Failed</span>', "undo-failed": '<span class="tag tag-bad">Undo failed</span>' };
+const RETIRE_STATUS = { retired: "tag-ok", restored: "tag-muted", partial: "tag-warn", "restore-partial": "tag-warn", failed: "tag-bad" };
+
+function pilotCard() {
+  const p = promo.policy;
+  if (!p) return `<section class="panel-card"><h2>Pilot policy</h2><p class="muted">${esc(promo.problem ?? "No pilot.")}</p></section>`;
+  return `<section class="panel-card"><div class="card-head"><h2>Pilot policy</h2><span class="spacer"></span>${p.enabled ? '<span class="tag tag-ok">On</span>' : '<span class="tag tag-warn">Off</span>'}</div>
+    <ul class="order-list">
+      <li><span class="o-name">${esc(p.name)}<span class="o-kind">${p.type === "server-web-control" ? "Server Web Control" : "Web Control"}, priority ${esc(p.priority ?? "?")}</span></span><span class="o-meta">${plural(p.endpoints, "device")}, ${plural(p.endpointGroups, "device group")}${p.users || p.userGroups ? `, ${plural(p.users + p.userGroups, "user target")}` : ""}</span></li>
+    </ul>
+    ${p.enabled ? "" : '<p class="hint">Off: devices moved onto it keep their current filtering until you turn it on.</p>'}
+    <div class="head-actions"><button class="btn btn-small ${p.enabled ? "" : "btn-soft"}" id="toggle">${p.enabled ? "Turn off" : "Turn on"}</button></div></section>`;
+}
+
+function wavesCard() {
+  if (!promo.plan) return "";
+  const plan = promo.plan;
+  const waves = plan.waves
+    .map((w) => `<li><div><div class="w-name">Wave ${w.n}: ${n(w.devices.length)} ${w.devices.length === 1 ? "device" : "devices"}</div><div class="w-devs">${esc(w.devices.map((d) => `${d.hostname}${d.group !== "No group" ? ` (${d.group})` : ""}`).join(", "))}</div></div>
+      <button class="btn btn-small btn-soft" data-wave="${w.n}"${promo.mode === "devices" ? "" : " disabled"}>${icon("play")}Move wave ${w.n}</button></li>`)
+    .join("");
+  return `<section class="panel-card"><div class="card-head"><h2>Waves</h2><span class="spacer"></span>
+      <label class="cu-options">Devices per wave <input type="number" id="wavesize" min="1" max="500" value="${waveSize}" style="width:80px" /></label></div>
+    ${promo.problem && promo.mode === "users" ? `<div class="banner banner-warn">${esc(promo.problem)}</div>` : ""}
+    <p class="hint">Only Windows devices on Sophos Endpoint 2026.1 or later, not yet on the pilot. Each wave is one change to the pilot's assignment, read back before the next. On the pilot now: ${n(plan.inPilot.length)}.</p>
+    ${waves ? `<ul class="wave-list">${waves}</ul>` : '<p class="muted">Every device that can use profiles is on the pilot.</p>'}
+  </section>`;
+}
+
+function historyCard() {
+  const rows = promo.waves
+    .map((w) => `<li><div><div class="w-name">${when(w.at)}: ${n(w.devices.length)} ${w.devices.length === 1 ? "device" : "devices"}</div><div class="w-devs">${esc(w.devices.map((d) => d.hostname).join(", "))}${w.readBack ? `. Read back: ${esc(w.readBack)}` : ""}${w.error ? `. ${esc(w.error)}` : ""}</div></div>
+      <span>${WAVE_STATUS[w.status] ?? ""}${["moved", "undo-failed"].includes(w.status) ? ` <button class="btn btn-small" data-undo-wave="${escAttr(w.id)}">Undo</button>` : ""}</span></li>`)
+    .join("");
+  return `<section class="panel-card"><h2>Waves moved</h2>${rows ? `<ul class="wave-list">${rows}</ul>` : '<p class="muted">None yet.</p>'}</section>`;
+}
+
+function classicCard() {
+  const rows = (promo.plan?.notEligible ?? []).map((d) => `<li><span class="o-name">${esc(d.hostname)}</span><span class="o-meta">${esc(REASON[d.reason] ?? d.reason)}</span></li>`).join("");
+  return `<section class="panel-card"><h2>Devices that stay on classic settings</h2>${rows ? `<ul class="order-list">${rows}</ul><p class="hint">Keep a classic Web Control policy, and the tags it uses, for these devices.</p>` : '<p class="muted">None.</p>'}</section>`;
+}
+
+function retireCard() {
+  const rows = retire.tags
+    .map((t) => `<tr><td><label class="checkbox"><input type="checkbox" name="tag" value="${escAttr(t.tag)}"${chosenTags.includes(t.tag) ? " checked" : ""}/> <b>${esc(t.tag)}</b></label></td><td class="num">${n(t.entries)}</td><td class="num">${n(t.only)}</td>
+      <td>${t.policies.length ? `<div class="tag-cell">${t.policies.map((p) => `<span class="tag ${p.onProfile ? "tag-muted" : p.enabled && p.targets ? "tag-warn" : "tag-muted"}" title="${escAttr(`${p.action}, ${p.onProfile ? "on a profile" : "classic"}, ${p.enabled ? "on" : "off"}, ${p.targets} targets`)}">${esc(p.name)}: ${esc(p.action)}</span>`).join("")}</div>` : '<span class="muted">no policy</span>'}</td></tr>`)
+    .join("");
+  const plan = retirePlan;
+  const steps = plan
+    ? plan.steps.map((s) => `<li>${esc(s.op === "policy-tags" ? `Policy "${s.policyName}": remove ${s.before.filter((x) => !s.after.some((y) => y.tag === x.tag)).map((x) => x.tag).join(", ")} from its tags` : s.op === "delete-entry" ? `Delete ${s.url} (tags ${s.tags.join(", ")})` : `${s.url}: tags ${s.before.join(", ")} become ${s.after.join(", ") || "none"}`)}</li>`).join("")
+    : "";
+  return `<section class="panel-card"><div class="card-head"><h2>Retire Website Management tags</h2><span class="spacer"></span><span class="hint">Last, once every wave is done</span></div>
+    <p class="hint">Retiring takes a fresh rollback snapshot, removes the tags from each policy first, then deletes the entries that carried only those tags and untags the rest. Each write is read back and audited; Restore puts it all back.</p>
+    ${rows ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>Tag</th><th class="num">Entries</th><th class="num">Only this tag</th><th>Policies (warn: classic and in use)</th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="muted">Website Management has no tags.</p>'}
+    <div class="head-actions"><button class="btn" id="plan-retire"${rows ? "" : " disabled"}>${icon("search")}Dry run</button></div>
+    ${plan ? `<h3>Plan for ${esc(plan.tags.join(", "))}</h3>
+      ${plan.problems.length ? `<ul class="check-list">${plan.problems.map((p) => `<li class="fail">${esc(p)}</li>`).join("")}</ul>` : `<ol class="flag-list">${steps}</ol>`}
+      ${plan.warnings.length ? `<ul class="check-list">${plan.warnings.map((p) => `<li class="warn">${esc(p)}</li>`).join("")}</ul><label class="checkbox cu-options"><input type="checkbox" id="confirm-retire"/> I've read the warnings; retire anyway</label>` : ""}
+      <div class="head-actions"><button class="btn btn-danger" id="go-retire"${plan.problems.length ? " disabled" : ""}>Retire ${esc(plan.tags.join(", "))}</button></div>` : ""}
+  </section>`;
+}
+
+function recordsCard() {
+  const rows = retire.records
+    .map((r) => `<tr><td class="cell-nowrap">${when(r.at)}</td><td class="cell-nowrap">${esc(r.tags.join(", "))}</td><td><span class="tag ${RETIRE_STATUS[r.status] ?? "tag-muted"}">${esc(r.status)}</span></td><td class="cu-why">${esc(r.steps.map((s) => `${s.op === "policy-tags" ? s.policyName : s.url}: ${s.status}${s.readBack ? ` (${s.readBack})` : ""}`).join("; "))}</td>
+      <td class="cell-nowrap">${["retired", "partial", "restore-partial", "failed"].includes(r.status) ? `<button class="btn btn-small" data-restore="${escAttr(r.id)}">Restore</button>` : ""} <button class="btn btn-small" data-diff="${escAttr(r.snapshotFile)}">Compare with snapshot</button></td></tr>`)
+    .join("");
+  return `<section class="panel-card"><h2>Retired</h2>${rows ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>When</th><th>Tags</th><th>Status</th><th>Steps</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="muted">Nothing retired yet.</p>'}</section>`;
+}
+
+function headline() {
+  const plan = promo.plan;
+  if (!plan) return "Promote and retire";
+  const left = plan.waves.reduce((a, w) => a + w.devices.length, 0);
+  const total = left + plan.inPilot.length;
+  return total ? `${n(plan.inPilot.length)} of ${n(total)} devices that can use profiles are on the pilot` : "No device can use profiles yet";
+}
+
+function render() {
+  main.innerHTML = `
+    <section class="page-head">
+      <div><span class="eyebrow">Promote and retire${promo.pilot ? `: ${esc(promo.pilot.policyName)}` : ""}</span>
+        <h1>${headline()}</h1>
+        <p class="page-lead">Move devices onto the pilot in waves, with a read-back after each. Devices that can't use profiles stay on classic settings. Retire Website Management tags last.</p></div>
+    </section>
+    <div class="build-grid">
+      <div class="score-main">${pilotCard()}${classicCard()}</div>
+      <div class="score-main">${wavesCard()}${historyCard()}${retireCard()}${recordsCard()}${diffHtml(diff)}</div>
+    </div>`;
+  wire();
+}
+
+async function refresh() {
+  const t = encodeURIComponent(tenantId);
+  [promo, retire] = await Promise.all([api.get(`/api/promote/${t}?waveSize=${waveSize}`), api.get(`/api/retire/${t}`)]);
+  render();
+}
+
+function wire() {
+  const t = encodeURIComponent(tenantId);
+  main.querySelector("#wavesize")?.addEventListener("change", async (e) => {
+    waveSize = Math.max(1, Number(e.target.value) || 25);
+    await refresh();
+  });
+  main.querySelector("#toggle")?.addEventListener("click", async () => {
+    const on = !promo.policy.enabled;
+    if (!window.confirm(on ? `Turn on "${promo.policy.name}"? Its devices start filtering with the profile.` : `Turn off "${promo.policy.name}"? Its devices fall back to the next policy.`)) return;
+    try {
+      const r = await api.post(`/api/promote/${t}/enabled`, { enabled: on });
+      toast(`Pilot ${r.enabled ? "on" : "off"}. Read back: ${r.readBack}.`, r.readBack === "matches" ? "ok" : "warn", 8000);
+    } catch (err) {
+      toast(err.message, "warn", 9000);
+    }
+    await refresh();
+  });
+  main.querySelectorAll("[data-wave]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      const wave = promo.plan.waves.find((w) => w.n === Number(b.dataset.wave));
+      const ids = wave.devices.map((d) => d.id);
+      try {
+        const dry = await api.post(`/api/promote/${t}/wave`, { devices: ids, dryRun: true });
+        if (dry.problems.length) {
+          toast(dry.problems.join(" "), "warn", 10000);
+          return;
+        }
+        if (!window.confirm(`Dry run: "${dry.policyName}" goes from ${dry.before.endpoints.length} to ${dry.after.endpoints.length} devices (${dry.devices.map((d) => d.hostname).join(", ")})${dry.enabled ? "" : ". The pilot is off, so filtering doesn't change yet"}. Move this wave?`)) return;
+        b.disabled = true;
+        b.innerHTML = '<span class="spinner"></span>Moving';
+        const r = await api.post(`/api/promote/${t}/wave`, { devices: ids, dryRun: false });
+        toast(r.status === "moved" ? `Wave moved. Read back: ${r.readBack}.` : `Wave ${r.status}: ${r.error ?? ""}`, r.status === "moved" ? "ok" : "warn", 9000);
+      } catch (err) {
+        toast(err.message, "warn", 9000);
+      }
+      await refresh();
+    }),
+  );
+  main.querySelectorAll("[data-undo-wave]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      if (!window.confirm("Put the pilot's assignment back as it was before this wave?")) return;
+      try {
+        const r = await api.post(`/api/promote/${t}/wave/${encodeURIComponent(b.dataset.undoWave)}/undo`, {});
+        toast(r.status === "undone" ? `Undone. ${r.readBack}.` : `Undo failed: ${r.error}`, r.status === "undone" ? "ok" : "warn", 9000);
+      } catch (err) {
+        toast(err.message, "warn", 9000);
+      }
+      await refresh();
+    }),
+  );
+  main.querySelectorAll('input[name="tag"]').forEach((c) =>
+    c.addEventListener("change", () => {
+      chosenTags = [...main.querySelectorAll('input[name="tag"]:checked')].map((x) => x.value);
+    }),
+  );
+  main.querySelector("#plan-retire")?.addEventListener("click", async () => {
+    if (!chosenTags.length) return toast("Choose the tags to retire.", "warn", 5000);
+    try {
+      retirePlan = await api.post(`/api/retire/${t}/plan`, { tags: chosenTags });
+      render();
+    } catch (err) {
+      toast(err.message, "warn", 9000);
+    }
+  });
+  main.querySelector("#go-retire")?.addEventListener("click", async (e) => {
+    const confirmBox = main.querySelector("#confirm-retire");
+    if (confirmBox && !confirmBox.checked) return toast("Tick the box to confirm the warnings first.", "warn", 6000);
+    if (!window.confirm(`Retire ${retirePlan.tags.join(", ")}? A rollback snapshot is saved first.`)) return;
+    e.target.disabled = true;
+    e.target.innerHTML = '<span class="spinner"></span>Retiring';
+    try {
+      const r = await api.post(`/api/retire/${t}/execute`, { tags: retirePlan.tags, confirm: !!confirmBox?.checked });
+      toast(`Retire: ${r.status}.`, r.status === "retired" ? "ok" : "warn", 9000);
+      retirePlan = null;
+      chosenTags = [];
+    } catch (err) {
+      toast(err.message, "warn", 10000);
+    }
+    await refresh();
+  });
+  main.querySelectorAll("[data-restore]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      if (!window.confirm("Restore: re-create and re-tag the entries, then put the tags back in each policy?")) return;
+      b.disabled = true;
+      b.innerHTML = '<span class="spinner"></span>Restoring';
+      try {
+        const r = await api.post(`/api/retire/${t}/${encodeURIComponent(b.dataset.restore)}/restore`, {});
+        toast(`Restore: ${r.status}.`, r.status === "restored" ? "ok" : "warn", 9000);
+      } catch (err) {
+        toast(err.message, "warn", 10000);
+      }
+      await refresh();
+    }),
+  );
+  main.querySelectorAll("[data-diff]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      b.innerHTML = '<span class="spinner"></span>Reading';
+      try {
+        diff = await api.post(`/api/diff/${t}`, { snapshotFile: b.dataset.diff });
+      } catch (err) {
+        toast(err.message, "warn", 10000);
+      }
+      render();
+    }),
+  );
+}
+
+async function start() {
+  await initShell();
+  tenantId = currentTenantId();
+  if (!tenantId) {
+    window.location.href = getStatus()?.mode === "partner" ? "/estate.html" : "/";
+    return;
+  }
+  const r = await api.get(`/api/readiness/${encodeURIComponent(tenantId)}`).catch(() => null);
+  if (r?.tenant) setTenant(r.tenant);
+  main.innerHTML = '<p class="running-line"><span class="spinner"></span>Reading the pilot, devices and Website Management</p>';
+  try {
+    await refresh();
+  } catch (err) {
+    main.innerHTML = `<div class="banner banner-err">${esc(err.message)}</div>`;
+  }
+}
+
+start();

@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Site list cleaner</title>
+<style>
+  :root { --navy:#001A47; --blue:#2006F7; --ink:#1d2433; --muted:#5b6b7a; --line:#d8e0ea; --tint:#EDF3F9; --ok:#0a7a3d; --bad:#C8001E; --warn:#9a5c00; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 "Segoe UI", Aptos, "Helvetica Neue", Arial, sans-serif; color: var(--ink); background: #fff; }
+  main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { color: var(--navy); font-size: 24px; margin: 4px 0 6px; }
+  .note { display: inline-block; font-size: 12px; background: var(--tint); border: 1px solid var(--line); border-radius: 4px; padding: 2px 8px; color: var(--navy); }
+  .grid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; margin-top: 16px; }
+  textarea { width: 100%; min-height: 200px; font: 12.5px/1.5 Consolas, Menlo, monospace; padding: 10px; border: 1px solid var(--line); border-radius: 6px; }
+  label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); font-weight: 600; margin-bottom: 10px; }
+  input, select { font: inherit; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; }
+  button { font: inherit; font-weight: 600; padding: 8px 14px; border-radius: 6px; border: 1px solid var(--line); background: #fff; cursor: pointer; }
+  button.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 12px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+  .covered { color: var(--ok); font-weight: 600; } .exception { color: var(--blue); font-weight: 600; } .remove { color: var(--muted); font-weight: 600; }
+  .counts { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 16px 0 8px; } .counts b { font-size: 20px; color: var(--navy); }
+  .lists { display: flex; flex-wrap: wrap; gap: 8px; }
+  .hint { font-size: 12px; color: var(--muted); }
+  .err { color: var(--bad); }
+  @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <span class="note">Unofficial tool, not from Sophos. This page calls SophosLabs Intelix only.</span>
+  <h1>Site list cleaner</h1>
+  <p class="hint">Paste sites (one per line) or a CSV with site, action and tags columns. Each entry comes back Covered, Exception or Remove, compared with the preset you pick. Your Intelix credential stays in this page's memory and goes only to api.labs.sophos.com. No DNS checks here: the Web Profiles Assistant server adds those.</p>
+  <div class="grid">
+    <div><textarea id="text" spellcheck="false" placeholder="example.com&#10;*.contoso-files.example"></textarea>
+      <label style="flex-direction:row;align-items:center;gap:8px">Load a CSV <input type="file" id="file" accept=".csv,.txt" /></label></div>
+    <div>
+      <label>Action for pasted sites<select id="action"><option value="block">Block</option><option value="allow">Allow</option><option value="warn">Warn</option></select></label>
+      <label>Compare with the preset<select id="preset"></select></label>
+      <label>Intelix Client ID<input id="cid" autocomplete="off" /></label>
+      <label>Intelix Client Secret<input id="csecret" type="password" autocomplete="off" /></label>
+      <label>Intelix region<select id="region"><option value="au">au</option><option value="us">us</option><option value="de">de</option></select></label>
+      <button class="primary" id="go">Classify</button>
+      <p class="hint">Intelix bills each lookup. Leave the credential empty to sort entries without lookups.</p>
+    </div>
+  </div>
+  <div id="out"></div>
+</main>
+<script>
+/* Library: the Web Profiles Assistant's domain modules, compiled from TypeScript and inlined by scripts/build-static-cleaner.mjs. */
+{{LIB}}
+</script>
+<script>
+{{APP}}
+</script>
+</body>
+</html>
