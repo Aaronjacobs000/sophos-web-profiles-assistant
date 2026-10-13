@@ -144,3 +144,34 @@ test("an override SophosLabs can't categorize carries its own action, with no de
   const noLookup = classify(input, DEFAULT_CATALOG, {});
   assert.match(noLookup.reason, /No SophosLabs category was looked up/);
 });
+
+// ---- found on a large real customer tenant (about 2,900 devices), rebuilt with invented data ----
+
+test("a shortened name ends at a word, without a dangling bracket", async () => {
+  const { fitName } = await import("../backend/dist/domain/cleanup.js");
+  assert.equal(fitName("Social/Video Block - Front Desk (North Site)", " profile"), "Social/Video Block - Front Desk profile");
+  assert.equal(fitName("Short name", " profile"), "Short name profile");
+  const long = "Averyveryverylongsinglewordpolicynamewithnospacesatall";
+  assert.equal(fitName(long, " profile").length, 50);
+});
+
+test("reasons agree in number, and big counts read with separators", async () => {
+  const { classify } = await import("../backend/dist/domain/cleanup.js");
+  const { DEFAULT_CATALOG } = await import("../backend/dist/domain/categories.js");
+  const t = (name) => ({ name, action: "allow", categoryActions: {} });
+  const r = classify({ id: "1", raw: "portal.example.com", categoryId: 6, tags: [], source: "website-management", targets: [t("A (category override: Business)"), t("B (category override: Business)")] }, DEFAULT_CATALOG, {});
+  assert.match(r.reason, /which its policies allow\./);
+  const { buildScorecard } = await import("../backend/dist/domain/scorecard.js");
+  const { inventory, ok, wcPolicy } = await import("./fixtures.mjs");
+  const sc = buildScorecard(inventory({ webControlPolicies: ok([wcPolicy({ name: "Base Policy", priority: 0, settings: { "endpoint.web-control.categories.2.action": { value: "block" } } })]) }));
+  const gap = sc.items.find((i) => i.id === "gap-check");
+  assert.match(gap.title, /^1 policy uses /);
+});
+
+test("wave size defaults to about ten waves", async () => {
+  const { suggestedWaveSize } = await import("../backend/dist/services/promote-service.js");
+  assert.equal(suggestedWaveSize(0), 25);
+  assert.equal(suggestedWaveSize(156), 25);
+  assert.equal(suggestedWaveSize(1753), 200);
+  assert.equal(suggestedWaveSize(20000), 500);
+});

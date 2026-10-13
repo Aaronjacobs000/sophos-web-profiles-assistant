@@ -92,10 +92,17 @@ export interface PromotionView {
   mode: "devices" | "users" | "none";
   plan: WavePlan | null;
   waves: WaveRecord[];
+  /** The wave size used: the one asked for, or about ten waves' worth. */
+  waveSize: number;
   problem?: string;
 }
 
-export async function promotionView(dataDir: string, ctx: TenantContext, waveSize: number): Promise<PromotionView> {
+/** About ten waves: 25 devices a wave for a small estate, more for a large one, in steps of 25. */
+export function suggestedWaveSize(candidates: number): number {
+  return Math.min(500, Math.max(25, Math.ceil(candidates / 10 / 25) * 25));
+}
+
+export async function promotionView(dataDir: string, ctx: TenantContext, waveSizeIn: number | null): Promise<PromotionView> {
   const t = ctx.tenantId;
   const pilot = await activePilot(dataDir, t);
   const waves = (await load(dataDir, t)).waves;
@@ -103,11 +110,14 @@ export async function promotionView(dataDir: string, ctx: TenantContext, waveSiz
   if (!pilot) {
     // No pilot yet: still show how the devices would split into waves, for planning.
     const devices = await listAllEndpoints(ro, t);
-    return { pilot, policy: null, mode: "none", plan: planWaves(devices, [], waveSize, "computer"), waves, problem: "There's no pilot yet, so these waves are a plan only. Build one in the Build step to move devices." };
+    const waveSize = waveSizeIn ?? suggestedWaveSize(planWaves(devices, [], 1, "computer").waves.length);
+    return { pilot, policy: null, mode: "none", plan: planWaves(devices, [], waveSize, "computer"), waves, waveSize, problem: "There's no pilot yet, so these waves are a plan only. Build one in the Build step to move devices." };
   }
   const [policy, devices] = await Promise.all([getPolicy(ro, t, pilot.policyId), listAllEndpoints(ro, t)]);
   const a = policy.appliesTo ?? {};
   const users = (a.users?.length ?? 0) + (a.userGroups?.length ?? 0);
+  const kind = policy.type === "server-web-control" ? "server" : "computer";
+  const waveSize = waveSizeIn ?? suggestedWaveSize(planWaves(devices, a.endpoints ?? [], 1, kind).waves.length);
   const view: PromotionView = {
     pilot,
     policy: {
@@ -122,8 +132,9 @@ export async function promotionView(dataDir: string, ctx: TenantContext, waveSiz
       userGroups: a.userGroups?.length ?? 0,
     },
     mode: users ? "users" : "devices",
-    plan: planWaves(devices, a.endpoints ?? [], waveSize, policy.type === "server-web-control" ? "server" : "computer"),
+    plan: planWaves(devices, a.endpoints ?? [], waveSize, kind),
     waves,
+    waveSize,
   };
   if (users) view.problem = "The pilot is assigned to users or user groups, and a policy can't hold users and devices together. Promote it by adding user groups in Sophos Fusion, or build a device pilot.";
   return view;

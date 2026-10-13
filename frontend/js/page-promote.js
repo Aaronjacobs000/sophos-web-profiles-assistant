@@ -13,7 +13,7 @@ const main = document.getElementById("main");
 let tenantId = null;
 let promo = null;
 let retire = null;
-let waveSize = 25;
+let waveSize = null; // the server suggests one until it's changed here
 let retirePlan = null;
 let chosenTags = [];
 let diff = null;
@@ -39,11 +39,11 @@ function wavesCard() {
   if (!promo.plan) return "";
   const plan = promo.plan;
   const waves = plan.waves
-    .map((w) => `<li><div><div class="w-name">Wave ${w.n}: ${n(w.devices.length)} ${w.devices.length === 1 ? "device" : "devices"}</div><div class="w-devs">${esc(w.devices.map((d) => `${d.hostname}${d.group !== "No group" ? ` (${d.group})` : ""}`).join(", "))}</div></div>
+    .map((w) => `<li><div><div class="w-name">Wave ${w.n}: ${n(w.devices.length)} ${w.devices.length === 1 ? "device" : "devices"}</div><div class="w-devs">${esc(w.devices.slice(0, 12).map((d) => `${d.hostname}${d.group !== "No group" ? ` (${d.group})` : ""}`).join(", "))}${w.devices.length > 12 ? `, and ${n(w.devices.length - 12)} more` : ""}</div></div>
       <button class="btn btn-small btn-soft" data-wave="${w.n}"${promo.mode === "devices" ? "" : " disabled"}>${icon("play")}Move wave ${w.n}</button></li>`)
     .join("");
   return `<section class="panel-card"><div class="card-head"><h2>Waves</h2><span class="spacer"></span>
-      <label class="cu-options">Devices per wave <input type="number" id="wavesize" min="1" max="500" value="${waveSize}" style="width:80px" /></label></div>
+      <label class="cu-options">Devices per wave <input type="number" id="wavesize" min="1" max="500" value="${promo.waveSize ?? waveSize ?? 25}" style="width:80px" /></label></div>
     ${promo.problem && promo.mode === "users" ? `<div class="banner banner-warn">${esc(promo.problem)}</div>` : ""}
     <p class="hint">Only Windows devices on Sophos Endpoint 2026.1 or later, not yet on the pilot. Each wave is one change to the pilot's assignment, read back before the next. On the pilot now: ${n(plan.inPilot.length)}.</p>
     ${waves ? `<ul class="wave-list">${waves}</ul>` : '<p class="muted">Every device that can use profiles is on the pilot.</p>'}
@@ -59,8 +59,13 @@ function historyCard() {
 }
 
 function classicCard() {
-  const rows = (promo.plan?.notEligible ?? []).map((d) => `<li><span class="o-name">${esc(d.hostname)}</span><span class="o-meta">${esc(REASON[d.reason] ?? d.reason)}</span></li>`).join("");
-  return `<section class="panel-card"><h2>Devices that stay on classic settings</h2>${rows ? `<ul class="order-list">${rows}</ul><p class="hint">Keep a classic Web Control policy, and the tags it uses, for these devices.</p>` : '<p class="muted">None.</p>'}</section>`;
+  const all = promo.plan?.notEligible ?? [];
+  // A large estate can have thousands: count them by reason, then list the first few.
+  const counts = Object.entries(all.reduce((m, d) => ((m[d.reason] = (m[d.reason] ?? 0) + 1), m), {})).sort((a, b) => b[1] - a[1]);
+  const rows = all.slice(0, 25).map((d) => `<li><span class="o-name">${esc(d.hostname)}</span><span class="o-meta">${esc(REASON[d.reason] ?? d.reason)}</span></li>`).join("");
+  return `<section class="panel-card"><div class="card-head"><h2>Devices that stay on classic settings</h2><span class="spacer"></span>${all.length ? `<span class="tag tag-muted">${n(all.length)}</span>` : ""}</div>
+    ${counts.length ? `<ul class="order-list">${counts.map(([r, c]) => `<li><span class="o-name">${esc(REASON[r] ?? r)}</span><span class="o-meta">${n(c)}</span></li>`).join("")}</ul>` : ""}
+    ${rows ? `<ul class="order-list" style="margin-top:10px">${rows}</ul>${all.length > 25 ? `<p class="hint">And ${n(all.length - 25)} more.</p>` : ""}<p class="hint">Keep a classic Web Control policy, and the tags it uses, for these devices.</p>` : '<p class="muted">None.</p>'}</section>`;
 }
 
 function retireCard() {
@@ -115,7 +120,7 @@ function render() {
 
 async function refresh() {
   const t = encodeURIComponent(tenantId);
-  [promo, retire] = await Promise.all([api.get(`/api/promote/${t}?waveSize=${waveSize}`), api.get(`/api/retire/${t}`)]);
+  [promo, retire] = await Promise.all([api.get(`/api/promote/${t}${waveSize ? `?waveSize=${waveSize}` : ""}`), api.get(`/api/retire/${t}`)]);
   render();
 }
 

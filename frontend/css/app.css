@@ -185,7 +185,8 @@ a.ctx-chip:hover { border-color: var(--line-2); background: var(--glass-2); text
 .cu-list b { display: block; font-size: 13px; color: var(--ink-0); }
 .cu-list-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; }
 .cu-table td { vertical-align: top; }
-.cu-table .cu-why { font-size: 12.5px; color: var(--ink-2); max-width: 360px; }
+.cu-table .cu-why { font-size: 12.5px; color: var(--ink-2); min-width: 240px; max-width: 360px; }
+.cu-table .cu-site { overflow-wrap: anywhere; }
 .cu-table .t-sub { display: block; font-size: 11.5px; color: var(--ink-4); margin-top: 3px; }
 .cu-table select { height: 30px; font-size: 12px; }
 .cu-options { display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: center; margin: 4px 0 0; }

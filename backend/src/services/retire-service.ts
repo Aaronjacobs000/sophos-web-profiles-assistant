@@ -147,7 +147,7 @@ async function warningsFor(ro: TenantApi, t: string, tags: string[], policies: P
   if (used) {
     const devices = await listAllEndpoints(ro, t);
     const classic = devices.map(deviceEligibility).filter((e) => e.platform !== "linux" && !e.eligible);
-    if (classic.length) warnings.push(`${classic.length} devices can't use profiles and keep classic settings, so the policies that use these tags still apply them to those devices.`);
+    if (classic.length) warnings.push(`${classic.length.toLocaleString("en-US")} devices can't use profiles and keep classic settings, so the policies that use these tags still apply them to those devices.`);
   }
   return warnings;
 }

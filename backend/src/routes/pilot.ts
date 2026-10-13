@@ -145,7 +145,9 @@ pilotRouter.post("/pilot/:tenantId/allow/:id/undo", jsonOnly, async (req, res) =
 pilotRouter.get("/promote/:tenantId", async (req, res) => {
   const ctx = ctxOr404(req, res);
   if (!ctx) return;
-  const size = Math.min(500, Math.max(1, Number(req.query.waveSize ?? 25) || 25));
+  // No waveSize: the view picks about ten waves' worth.
+  const asked = Number(req.query.waveSize);
+  const size = Number.isFinite(asked) && asked >= 1 ? Math.min(500, Math.floor(asked)) : null;
   try {
     res.json(await promotionView(getState().dataDir, ctx, size));
   } catch (err) {

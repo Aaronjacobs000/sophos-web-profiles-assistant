@@ -2,7 +2,7 @@
 
 A local web tool that takes a Sophos Fusion (formerly Sophos Central) tenant, or a partner's whole estate, from classic Sophos Endpoint Web Control policies and Website Management tags to web filtering profiles and site lists.
 
-> **Unofficial tool, not from Sophos and not supported by Sophos.** It calls the public Sophos Fusion APIs with a credential you supply. Confirm every setting in Sophos Fusion before you change it, and try it on a test tenant first. Every step has been tested with writes on test tenants. The read-only steps have also been tested on a real customer tenant (see [Testing](#testing)).
+> **Unofficial tool, not from Sophos and not supported by Sophos.** It calls the public Sophos Fusion APIs with a credential you supply. Confirm every setting in Sophos Fusion before you change it, and try it on a test tenant first. Every step has been tested with writes on test tenants. The read-only steps have also been tested on real customer tenants and a real partner estate (see [Testing](#testing)).
 
 ## What it looks like
 
@@ -197,7 +197,7 @@ The readiness page offers the report as HTML or PDF. The HTML is one self-contai
 
 ## Partner estate
 
-Scans read `ESTATE_CONCURRENCY` tenants at once, 4 by default and 8 at most. Each tenant gets its own scorecard, result file and snapshot. On a test partner estate of 148 tenants a full scan took 2 min 58 s: 1,929 read-only calls, 4 tenants at a time, no rate limiting. Tenants the credential can't read show as Unreadable.
+Scans read `ESTATE_CONCURRENCY` tenants at once, 4 by default and 8 at most. Each tenant gets its own scorecard, result file and snapshot. On a test partner estate of 148 tenants a full scan took 2 min 58 s: 1,929 read-only calls, 4 tenants at a time, no rate limiting. On a real estate of about 150 tenants it took 3 min 54 s at 3 at a time. Tenants the credential can't read show as Unreadable.
 
 ## The static site list cleaner
 
@@ -233,13 +233,16 @@ The server listens on 127.0.0.1:3110, so only this computer can reach it. To ser
 - **Admin role.** The API can't show an admin's role, so the Manage web profiles check is manual.
 - **Inferred mapping.** "Additional security options" and "Protect against data loss" have no API settings of their own. The tool reads them as classic categories 0, 2, 10 and 54, based on Help wording. Sophos hasn't confirmed this.
 - **User or Device.** The API has no policy type field; a policy is a user or device policy by what it's assigned to. Pick the targets before you build.
-- **Scoring on real estates.** The customer tenant it was tested on had light classic configuration (Base policies and a single Website Management entry), so thresholds such as "broad" and "shadowed" are still untested at scale.
+- **Scoring on real estates.** Real tenants of up to about 2,900 devices and a 150-tenant estate have been read, but their classic configuration was light: the most Website Management entries in any tenant was about 80, and the most Web Control policies five. A tenant with thousands of entries or dozens of policies is still untested.
 - **Threat Protection fixes.** The scorecard flags decryption and Block QUIC; the tool doesn't change Threat Protection policies. Turn them on in Sophos Fusion.
 
 ## Testing
 
 - **Test tenants, with writes (13/10/2026):** every step end to end, including the build, rollback, narrow Allow, promotion waves and retiring tags with a restore. Each run left the tenant identical to its snapshot.
-- **A real customer tenant, read-only (13/10/2026):** about 430 devices, two Web Control policies, five Threat Protection policies, a Website Management entry and a day of real Web Control events. The run used read-only mode the whole time and changed nothing. It covered the scorecard, snapshot, HTML and PDF report, clean-up with SophosLabs and DNS, the site list cleaner, design, the build dry run, the pilot digest, wave planning, the retire dry run, and an estate scan limited to two tenants.
+- **Real customer tenants, read-only (13/10/2026):** every read path, with read-only mode on the whole time and nothing changed: the scorecard, snapshot, HTML and PDF report, clean-up with SophosLabs and DNS, the site list cleaner, design, the build dry run, the pilot digest, wave planning and the retire dry run.
+  - A tenant of about 430 devices with Base policies, one Website Management entry and a day of real Web Control events.
+  - A larger tenant of about 2,900 devices with three Web Control policies (one custom, with tags), 26 Website Management entries, all of them category overrides, and a day of real events. The scorecard took 13 s, the device list 11 s, the clean-up with SophosLabs 6 s, and planning waves for about 1,700 eligible devices 10 s.
+- **A real partner estate, read-only (13/10/2026):** about 150 tenants and 13,000 devices. The estate scan took 3 min 54 s at 3 tenants at a time: about 2,050 calls and no rate limiting. 4 tenants refused the credential and showed as Unreadable.
 - **SophosLabs Intelix, live (13/10/2026):** see [SophosLabs Intelix](#sophoslabs-intelix-optional).
 
 ## Development

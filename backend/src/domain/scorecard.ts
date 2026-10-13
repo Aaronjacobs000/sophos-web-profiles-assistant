@@ -619,7 +619,7 @@ export function buildScorecard(inv: Inventory): Scorecard {
     push({
       id: "gap-check",
       severity: "plan",
-      title: `${plural(gapPolicies.length, "policy", "policies")} use Additional security options or Protect against data loss`,
+      title: `${plural(gapPolicies.length, "policy", "policies")} ${gapPolicies.length === 1 ? "uses" : "use"} Additional security options or Protect against data loss`,
       detail:
         "A profile has no setting with those names. Help says they cover ads, uncategorized sites, risky downloads, web email and file downloads; in the API that reads as classic categories 2, 0, 10 and 54 (inferred, not documented).",
       fix: "Set the matching profile categories (Advertisements, Uncategorized, Download freeware and shareware, Web e-mail) and keep Risky File Types on Recommended. Confirm the result in a test policy before you retire the classic one.",

@@ -87,6 +87,7 @@ function entryAction(targets: CleanupTarget[]): EntryAction {
 
 const VERB: Record<FilterAction, string> = { allow: "allows", block: "blocks", warn: "warns on" };
 const ACTION_WORD_LOWER: Record<FilterAction, string> = { allow: "an Allow", block: "a Block", warn: "a Warn" };
+const VERB_PLURAL: Record<FilterAction, string> = { allow: "allow", block: "block", warn: "warn on" };
 
 /**
  * Classifies one entry. `seen` holds site values already classified, to catch
@@ -156,7 +157,7 @@ function classifyEntry(
   }
   // An override says what the admin wanted; without a SophosLabs category to compare, carry it over as it is.
   if (override && !lookup?.profileCategory) {
-    const what = action === "mixed" ? "which its policies treat differently" : `which ${input.targets.length > 1 ? "its policies" : "its policy"} ${VERB[action]}`;
+    const what = action === "mixed" ? "which its policies treat differently" : input.targets.length > 1 ? `which its policies ${VERB_PLURAL[action]}` : `which its policy ${VERB[action]}`;
     return out(
       "exception",
       `Website Management puts it in ${override}, ${what}. ${lookup ? "SophosLabs has no category for it" : "No SophosLabs category was looked up"}, so ${action === "mixed" ? "decide its action" : `it moves to ${ACTION_WORD_LOWER[action]} site list`}.`,
@@ -227,7 +228,13 @@ export const DESCRIPTION_MAX = 250;
 /** base + suffix in at most max characters, shortening the base and keeping the suffix. */
 export function fitName(base: string, suffix = "", max = NAME_MAX): string {
   const room = Math.max(1, max - suffix.length);
-  return `${base.length > room ? base.slice(0, room).trimEnd() : base}${suffix}`.slice(0, max);
+  if (base.length <= room) return `${base}${suffix}`.slice(0, max);
+  // Shorten at a word boundary, and drop a dangling "(", "-" or "/" a cut can leave.
+  let cut = base.slice(0, room);
+  const space = cut.lastIndexOf(" ");
+  if (space > room / 2) cut = cut.slice(0, space);
+  cut = cut.replace(/\s*\([^)]*$/, "").replace(/[\s\-/:,(]+$/, "");
+  return `${cut || base.slice(0, room)}${suffix}`.slice(0, max);
 }
 
 /** Exceptions as site lists: one action per list, at most 750 sites each. Mixed and broad entries without a decision are left out. */

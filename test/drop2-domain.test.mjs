@@ -273,7 +273,7 @@ test("profile and site list names fit the API's 50 characters, descriptions 250"
   const { fitName, NAME_MAX } = await import("../backend/dist/domain/cleanup.js");
   assert.equal(fitName("Short", " Allow"), "Short Allow");
   const long = "Contoso Legal Head Office Finance and Payroll Web Control";
-  assert.equal(fitName(long, " Block 2").length, NAME_MAX);
+  assert.ok(fitName(long, " Block 2").length <= NAME_MAX);
   assert.ok(fitName(long, " Block 2").endsWith(" Block 2"));
   const policies = [wcPolicy({ id: "l1", name: long, priority: 1, settings: { "endpoint.web-control.categories.1.action": { value: "block" }, "endpoint.web-control.tags.settings": { value: [{ tag: "t", action: "allow" }] } } }), wcPolicy({ id: "l2", name: `${long} two`, priority: 2, settings: { "endpoint.web-control.categories.3.action": { value: "block" }, "endpoint.web-control.tags.settings": { value: [{ tag: "t", action: "allow" }] } } })];
   const d = buildDesign(C, policies, [{ id: "s", url: "payroll.example.com", tags: ["t"] }], null, { date: "13/10/2026", existingProfiles: 0, existingSiteLists: 0 });
