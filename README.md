@@ -154,7 +154,7 @@ The build saves a rollback snapshot, then sends each write once and reads it bac
 
 The pilot is assigned through `appliesTo` to devices and device groups, or to user groups, never both. The pilot is a Web Control policy, which applies to computers: the dry run refuses servers and server groups, and so do promotion waves, because the API accepts them on a computer policy anyway. Device groups are always sent with an empty `endpoints` list, because the API answers 500 to `endpointGroups` on its own. You can build the pilot disabled and turn it on later.
 
-Rollback deletes by recorded id in reverse order: the policy, then the profile, then the site lists, each confirmed with a 404. Website Management goes back from the snapshot: missing entries are re-created and changed ones patched, and entries someone else added are left alone. If the snapshot was changed after it was saved (its SHA-256 doesn't match), nothing is restored from it and the rollback says so. Compare with snapshot then reads the tenant and reports what matches. Objects other tools added or removed in the meantime are listed but don't count against a match.
+Rollback deletes by recorded id in reverse order: the policy, then the profile, then the site lists, each confirmed with a 404. When a delete fails, or read-only mode refuses it, the Pilot and Promote pages keep the pilot and say the rollback didn't finish: roll back again, or carry on with the pilot. Website Management goes back from the snapshot: missing entries are re-created and changed ones patched, and entries someone else added are left alone. If the snapshot was changed after it was saved (its SHA-256 doesn't match), nothing is restored from it and the rollback says so. Compare with snapshot then reads the tenant and reports what matches. Objects other tools added or removed in the meantime are listed but don't count against a match.
 
 ## Pilot digest
 
@@ -256,6 +256,10 @@ npm run collect       # collect SIEM web events for the pilot digest
 ```
 
 The logic lives in `backend/src/domain/` (eligibility, sites, scorecard, snapshot, report, categories, csv, intelix, cleanup, design, restore, digest, promote). These are pure modules with no Node or browser imports; the static site list cleaner inlines them. The API wrappers are in `backend/src/sophos/api/`, and the services that write are in `backend/src/services/`. The server plumbing (credentials, network guard, audit log, retries, write read-back) comes from the Sophos Fusion Tenant Migration Tool; see `ATTRIBUTIONS.md`.
+
+## Security
+
+To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 ## License
 

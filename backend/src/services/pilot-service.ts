@@ -38,7 +38,7 @@ import { listAllEndpoints } from "../sophos/api/endpoints.js";
 import { SITE_LIST_LIMIT } from "../domain/design.js";
 import { fitName } from "../domain/cleanup.js";
 import { auditedWrite } from "./audit-log.js";
-import { auditedCreate, getBuild, listBuilds, saveRecord, type BuildRecord } from "./build-service.js";
+import { auditedCreate, getBuild, listBuilds, saveRecord, type BuildRecord, type BuildStep } from "./build-service.js";
 import { readBack } from "./write-check.js";
 import { readText, saveFile } from "./safe-files.js";
 
@@ -56,15 +56,28 @@ export interface PilotInfo {
   profileName: string;
   snapshotFile?: string;
   targets: BuildRecord["pilot"]["targets"];
+  /** Set when a rollback of this build didn't finish: when it ran, why, and what it left in the tenant. */
+  rollbackUnfinished?: { at?: string; reason?: string; left: Array<{ kind: BuildStep["kind"]; name: string }> };
 }
 
 /** The newest build whose pilot policy and profile still exist by this tool's record. */
 export async function activePilot(dataDir: string, tenantId: string): Promise<PilotInfo | null> {
+  // A delete that failed, or that read-only mode refused, left the object in the tenant.
+  const there = (s: BuildStep) => !!s.id && (s.status === "created" || s.status === "delete-failed");
   for (const b of await listBuilds(dataDir, tenantId)) {
     if (!["built", "partial", "rollback-partial"].includes(b.status)) continue;
-    const policy = b.steps.find((s) => s.kind === "policy" && s.id && s.status === "created");
-    const profile = b.steps.find((s) => s.kind === "profile" && s.id && s.status === "created");
+    const policy = b.steps.find((s) => s.kind === "policy" && there(s));
+    const profile = b.steps.find((s) => s.kind === "profile" && there(s));
     if (!policy || !profile) continue;
+    const failed = b.rollback?.steps.find((s) => s.error || s.status === "still there after delete");
+    const rollbackUnfinished =
+      b.status === "rollback-partial"
+        ? {
+            at: b.rollback?.at,
+            reason: failed ? failed.error ?? `${failed.name} was still there after the delete.` : undefined,
+            left: b.steps.filter((s) => s.id && s.status !== "deleted").map((s) => ({ kind: s.kind, name: s.name })),
+          }
+        : undefined;
     return {
       buildId: b.id,
       buildStatus: b.status,
@@ -75,6 +88,7 @@ export async function activePilot(dataDir: string, tenantId: string): Promise<Pi
       profileName: profile.name,
       snapshotFile: b.snapshotFile,
       targets: b.pilot.targets,
+      rollbackUnfinished,
     };
   }
   return null;

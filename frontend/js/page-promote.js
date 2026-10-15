@@ -4,7 +4,7 @@
 
 import { api } from "./api.js";
 import { currentTenantId, getStatus, initShell, setTenant } from "./shell.js";
-import { esc, escAttr, plural } from "./ui.js";
+import { esc, escAttr, plural, rollbackUnfinishedBanner } from "./ui.js";
 import { icon } from "./icons.js";
 import { toast } from "./toast.js";
 import { diffHtml } from "./diff-view.js";
@@ -31,6 +31,7 @@ function pilotCard() {
     <ul class="order-list">
       <li><span class="o-name">${esc(p.name)}<span class="o-kind">${p.type === "server-web-control" ? "Server Web Control" : "Web Control"}, priority ${esc(p.priority ?? "?")}</span></span><span class="o-meta">${plural(p.endpoints, "device")}, ${plural(p.endpointGroups, "device group")}${p.users || p.userGroups ? `, ${plural(p.users + p.userGroups, "user target")}` : ""}</span></li>
     </ul>
+    ${rollbackUnfinishedBanner(promo.pilot, tenantId)}
     ${p.enabled ? "" : '<p class="hint">Off: devices moved onto it keep their current filtering until you turn it on.</p>'}
     <div class="head-actions"><button class="btn btn-small ${p.enabled ? "" : "btn-soft"}" id="toggle">${p.enabled ? "Turn off" : "Turn on"}</button></div></section>`;
 }

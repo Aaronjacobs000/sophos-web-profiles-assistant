@@ -30,6 +30,19 @@ export function plural(n, one, many = `${one}s`) {
   return `${n} ${n === 1 ? one : many}`;
 }
 
+/** The note on a pilot whose rollback didn't finish: what it left in the tenant, why, and what to do next. */
+export function rollbackUnfinishedBanner(pilot, tenantId) {
+  const r = pilot?.rollbackUnfinished;
+  if (!r) return "";
+  const named = ["policy", "profile"].flatMap((k) => r.left.filter((s) => s.kind === k).map((s) => `the ${k} "${s.name}"`));
+  const lists = r.left.filter((s) => s.kind === "site-list").length;
+  const parts = [...named, ...(lists ? [plural(lists, "site list")] : [])];
+  const left = parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}` : parts[0] ?? "the pilot";
+  // The reason can hold a long URL with an id, so it wraps anywhere.
+  return `<div class="banner banner-warn" style="overflow-wrap:anywhere;margin-bottom:10px"><strong>The rollback didn't finish.</strong> Still in the tenant: ${esc(left)}.${r.reason ? ` ${esc(r.reason)}` : ""}
+    Roll it back again from the <a href="/build.html?tenant=${encodeURIComponent(tenantId)}">Build</a> page, or carry on with the pilot.</div>`;
+}
+
 /**
  * A "more" button that opens a small menu. items: [{ label, icon, danger, attrs }]
  * where attrs is a string of data attributes the page wires up itself.

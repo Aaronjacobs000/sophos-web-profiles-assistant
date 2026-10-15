@@ -11,6 +11,7 @@ import { jsonBody } from "../middleware/json-body.js";
 import { clearReadinessCache } from "../services/readiness.js";
 import { resetEstate } from "../services/estate.js";
 import { log, maskSecrets } from "../log.js";
+import { EnvValueError } from "../config/env-file.js";
 
 export const credentialsRouter = Router();
 
@@ -52,6 +53,10 @@ credentialsRouter.put("/credentials", jsonBody, async (req, res) => {
     clearReadinessCache();
     resetEstate();
   } catch (err) {
+    if (err instanceof EnvValueError) {
+      res.status(400).json({ error: "bad_request", message: maskSecrets(err.message) });
+      return;
+    }
     log.error("[credentials:PUT] save failed", err);
     res.status(500).json({ error: "save_failed", message: maskSecrets(err instanceof Error ? err.message : String(err)) });
     return;

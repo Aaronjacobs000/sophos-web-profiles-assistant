@@ -12,6 +12,7 @@ import { requireConfigured } from "../middleware/require-configured.js";
 import { jsonOnly } from "../middleware/json-body.js";
 import { IntelixClient, INTELIX_REGIONS, type IntelixRegion } from "../domain/intelix.js";
 import { intelixClient, intelixView, saveIntelix } from "../services/intelix-config.js";
+import { EnvValueError } from "../config/env-file.js";
 import { getRun, runStandalone, setDecisions, startTenantCleanup, tenantInputs, withDecisions } from "../services/cleanup-service.js";
 import { inputsFromText, resultsCsv, siteListCsv, siteListsFrom, summarise } from "../domain/cleanup.js";
 import { catalogFrom, expandPreset, type Catalog } from "../domain/categories.js";
@@ -61,7 +62,7 @@ convertRouter.put("/intelix", jsonOnly, async (req, res) => {
     await saveIntelix({ clientId: b.clientId.trim(), clientSecret: b.clientSecret?.trim(), region: b.region });
     res.json(intelixView());
   } catch (err) {
-    fail(res, err, 500);
+    fail(res, err, err instanceof EnvValueError ? 400 : 500);
   }
 });
 

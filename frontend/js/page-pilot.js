@@ -4,7 +4,7 @@
 
 import { api } from "./api.js";
 import { currentTenantId, getStatus, initShell, setTenant } from "./shell.js";
-import { esc, escAttr, relTime } from "./ui.js";
+import { esc, escAttr, relTime, rollbackUnfinishedBanner } from "./ui.js";
 import { icon } from "./icons.js";
 import { toast } from "./toast.js";
 
@@ -29,6 +29,7 @@ function pilotCard() {
       <li><span class="o-name">${esc(p.policyName)}<span class="o-kind">Policy, priority ${esc(pol?.priority ?? "?")}</span></span><span class="o-meta">${n(targets)} ${pol?.users.length || pol?.userGroups.length ? "user" : "device"} ${targets === 1 ? "target" : "targets"}</span></li>
       <li><span class="o-name">${esc(p.profileName)}<span class="o-kind">Profile</span></span><span class="o-meta"><a href="/build.html?tenant=${encodeURIComponent(tenantId)}">Build</a></span></li>
     </ul>
+    ${rollbackUnfinishedBanner(p, tenantId)}
     ${pol && !pol.enabled ? '<p class="hint">The pilot is off, so it filters nothing yet. Turn it on from the Promote and retire page when you are ready.</p>' : ""}</section>`;
 }
 

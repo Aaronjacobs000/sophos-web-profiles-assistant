@@ -66,13 +66,21 @@ export function getEnvValue(file: EnvFile, key: string): string | undefined {
   return undefined;
 }
 
+/** A value a setting can't take as sent. The request was wrong, so routes answer 400 with the message. */
+export class EnvValueError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EnvValueError";
+  }
+}
+
 export function setEnvValues(
   file: EnvFile,
   updates: Record<string, string | undefined>,
 ): EnvFile {
   // Each setting is one line: a line break in a value would write lines of its own, other settings included.
   for (const [key, value] of Object.entries(updates)) {
-    if (value !== undefined && /[\r\n]/.test(value)) throw new Error(`${key} can't contain a line break.`);
+    if (value !== undefined && /[\r\n]/.test(value)) throw new EnvValueError(`${key} can't contain a line break.`);
   }
   const lines = [...file.lines];
   const remaining = new Set(Object.keys(updates));
