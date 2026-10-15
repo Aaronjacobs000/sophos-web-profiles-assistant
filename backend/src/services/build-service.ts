@@ -501,7 +501,12 @@ export function policyMatches(sent: Record<string, unknown>, got: Policy): boole
 }
 
 /** Undoes a build: policy, then profiles, then site lists, each confirmed gone; then Website Management from the snapshot. */
-export async function rollback(dataDir: string, ctx: TenantContext, buildId: string, opts: { dryRun: boolean }): Promise<BuildRecord & { restorePlan?: RestoreStep[] }> {
+export async function rollback(
+  dataDir: string,
+  ctx: TenantContext,
+  buildId: string,
+  opts: { dryRun: boolean },
+): Promise<BuildRecord & { restorePlan?: RestoreStep[]; restoreRefused?: string }> {
   const record = await getBuild(dataDir, ctx.tenantId, buildId);
   const api: TenantApi = ctx.client;
   const ro = new ReadOnlyApi(api);
@@ -510,15 +515,20 @@ export async function rollback(dataDir: string, ctx: TenantContext, buildId: str
   const order: StepKind[] = ["policy", "profile", "site-list"];
   const toDelete = order.flatMap((k) => created.filter((s) => s.kind === k).reverse());
   let restorePlan: RestoreStep[] = [];
+  let restoreRefused: string | undefined;
   let snapshot: Snapshot | null = null;
   if (record.snapshotFile) {
     const loaded = await loadSnapshot(dataDir, t, record.snapshotFile);
     snapshot = loaded.snapshot;
-    if (snapshot.objects.websiteManagement) {
+    // A snapshot edited after it was saved doesn't say what the tenant was, so nothing is written from it.
+    if (!loaded.intact) {
+      restoreRefused = `The snapshot ${record.snapshotFile} was changed after it was saved (its SHA-256 doesn't match), so Website Management isn't restored from it. Check Website Management in Sophos Fusion.`;
+    } else if (snapshot.objects.websiteManagement) {
       restorePlan = planWebsiteManagementRestore(snapshot.objects.websiteManagement, await listLocalSites(ro, t));
     }
   }
-  if (opts.dryRun) return { ...record, restorePlan };
+  const refused = restoreRefused ? { restoreRefused } : {};
+  if (opts.dryRun) return { ...record, restorePlan, ...refused };
 
   const out: NonNullable<BuildRecord["rollback"]>["steps"] = [];
   const getter: Record<StepKind, (id: string) => Promise<unknown>> = {
@@ -563,10 +573,11 @@ export async function rollback(dataDir: string, ctx: TenantContext, buildId: str
       out.push({ kind: "website-management", name: `${step.op} ${step.url}`, status: "failed", error: err instanceof Error ? err.message : String(err) });
     }
   }
+  if (restoreRefused) out.push({ kind: "website-management", name: "Website Management from the snapshot", status: "failed", error: restoreRefused });
   record.rollback = { at: new Date().toISOString(), steps: out };
   record.status = out.every((o) => o.status !== "failed" && o.status !== "still there after delete") ? "rolled-back" : "rollback-partial";
   await saveRecord(dataDir, record);
-  return { ...record, restorePlan };
+  return { ...record, restorePlan, ...refused };
 }
 
 /** Every id this tool deleted in a tenant, from the audit log. */

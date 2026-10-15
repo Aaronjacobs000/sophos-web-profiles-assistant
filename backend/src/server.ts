@@ -7,7 +7,7 @@ import dotenv from "dotenv";
 import { initState } from "./state.js";
 import { log } from "./log.js";
 import { errorHandler } from "./middleware/error-handler.js";
-import { localHostOnly } from "./middleware/local-host.js";
+import { localHostOnly, noFraming, ownPagesOnly } from "./middleware/local-host.js";
 import { allowedClientsOnly } from "./middleware/client-ip.js";
 import { addressUrl, listenErrorMessage, networkSettings, type NetworkSettings } from "./config/network.js";
 import { auditWarnings } from "./services/audit-log.js";
@@ -73,10 +73,14 @@ async function main() {
 
   const app = express();
   app.disable("x-powered-by");
+  // On every answer, refusals included: no other site may frame the tool.
+  app.use(noFraming);
   // First, so a client outside ALLOWED_IPS gets nothing at all.
   app.use(allowedClientsOnly(network.allowList));
   // Next, so a page on another site that reaches the tool by DNS rebinding gets nothing.
   app.use(localHostOnly);
+  // And the API answers only the tool's own pages.
+  app.use("/api", ownPagesOnly);
   app.use(express.json({ limit: "3mb" }));
   app.use(auditWarnings);
 

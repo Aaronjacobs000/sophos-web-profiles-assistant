@@ -79,6 +79,33 @@ function originAllowed(origin: string, host: string, hostHeader: string, extra: 
   return extra.has(name) && url.port === "";
 }
 
+/**
+ * No page on another site may show the tool in a frame. A framed page still
+ * sends its own requests, so a site that framed it, out of sight, could have
+ * the user's clicks land on the tool's buttons.
+ */
+export function noFraming(_req: Request, res: Response, next: NextFunction): void {
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Content-Security-Policy", "frame-ancestors 'none'");
+  next();
+}
+
+/**
+ * The API answers only the tool's own pages. A browser marks every request
+ * with Sec-Fetch-Site; one marked cross-site or same-site came from another
+ * page, such as an image tag on another site that would make the tool read
+ * the tenant or print a PDF. A request without the header (an older browser,
+ * curl) is left to the checks above.
+ */
+export function ownPagesOnly(req: Request, res: Response, next: NextFunction): void {
+  const site = req.headers["sec-fetch-site"];
+  if (site === "cross-site" || site === "same-site") {
+    res.status(403).json({ error: "forbidden_site", message: "The tool's API answers only the tool's own pages." });
+    return;
+  }
+  next();
+}
+
 export function localHostOnly(req: Request, res: Response, next: NextFunction): void {
   const beyondLoopback = listensBeyondLoopback();
   const extra = extraHosts();

@@ -98,7 +98,7 @@ Checks send GET requests only; the client they use refuses any other method befo
 | Promote | The pilot policy and devices | The pilot's assignment, one wave at a time |
 | Retire | Website Management, Web Control policies, a fresh snapshot | Tags taken out of each policy's tag settings, then entries deleted or untagged |
 
-On this computer the tool writes `.env`, `data/snapshots/`, `data/results/`, `data/estate/`, `data/cleanup/`, `data/design/`, `data/builds/`, `data/siem/`, `data/pilot/`, `data/promote/`, `data/retire/` and `data/audit.log`.
+On this computer the tool writes `.env`, `data/snapshots/`, `data/results/`, `data/estate/`, `data/cleanup/`, `data/design/`, `data/builds/`, `data/siem/`, `data/pilot/`, `data/promote/`, `data/retire/` and `data/audit.log`. The data folder, `.env` and the audit log are readable only by the account that runs the tool (on Windows they keep the folder's own permissions).
 
 ## What the scorecard checks
 
@@ -154,7 +154,7 @@ The build saves a rollback snapshot, then sends each write once and reads it bac
 
 The pilot is assigned through `appliesTo` to devices and device groups, or to user groups, never both. The pilot is a Web Control policy, which applies to computers: the dry run refuses servers and server groups, and so do promotion waves, because the API accepts them on a computer policy anyway. Device groups are always sent with an empty `endpoints` list, because the API answers 500 to `endpointGroups` on its own. You can build the pilot disabled and turn it on later.
 
-Rollback deletes by recorded id in reverse order: the policy, then the profile, then the site lists, each confirmed with a 404. Website Management goes back from the snapshot: missing entries are re-created and changed ones patched, and entries someone else added are left alone. Compare with snapshot then reads the tenant and reports what matches. Objects other tools added or removed in the meantime are listed but don't count against a match.
+Rollback deletes by recorded id in reverse order: the policy, then the profile, then the site lists, each confirmed with a 404. Website Management goes back from the snapshot: missing entries are re-created and changed ones patched, and entries someone else added are left alone. If the snapshot was changed after it was saved (its SHA-256 doesn't match), nothing is restored from it and the rollback says so. Compare with snapshot then reads the tenant and reports what matches. Objects other tools added or removed in the meantime are listed but don't count against a match.
 
 ## Pilot digest
 
@@ -162,7 +162,7 @@ The SIEM API keeps about 24 hours of events, so the digest works from events thi
 
 Events give the action and reason only as text, for example `'https://example.com/setup.exe' warned due to filetype 'Windows Executable (exe)'`. The digest reads that text into site, action and reason. Text it can't read is counted, not dropped. The file type and category wording have both been seen in real events ("blocked due to category '...'"); the site list wording the parser also reads hasn't been seen yet. You can import a saved SIEM events response (JSON) as well; imported events are marked and the digest says how many it includes.
 
-Allow adds the exact host (never its parent domain) to a site list kept for the pilot's allows. The first one creates that list, named after the profile, and links it to the pilot's profile as Allow with the highest site list priority, so it wins over the profile's block and warn lists. The profile is sent whole, as the API requires, and read back. Each Allow has a dry run, an audit entry and an undo; undoing the last one unlinks the list and deletes it. Rolling the build back deletes the list too. A file type warning, such as an installer download, isn't a category decision: allowing the host lets every file type from it through.
+Allow adds the exact host (never its parent domain) to a site list kept for the pilot's allows. A host that covers far more than one site (a whole top-level domain such as `com`, a public suffix such as `co.uk`, or a shared hosting platform) is refused; add an entry that broad in Sophos Fusion if you mean it. The first one creates that list, named after the profile, and links it to the pilot's profile as Allow with the highest site list priority, so it wins over the profile's block and warn lists. The profile is sent whole, as the API requires, and read back. Each Allow has a dry run, an audit entry and an undo; undoing the last one unlinks the list and deletes it. Rolling the build back deletes the list too. A file type warning, such as an installer download, isn't a category decision: allowing the host lets every file type from it through.
 
 ## Promotion waves
 
@@ -189,7 +189,7 @@ Every check and every build saves `data/snapshots/<tenant id>/<tenant>_<YYYYMMDD
 - every web filtering profile (full settings) and every site list with its sites
 - names for each user, group and device group an assignment refers to
 
-Each file carries a SHA-256 of its objects, so a restore can tell when a file was edited. A section that couldn't be read is stored as `null` and listed in `unreadSections`, never as an empty list. Each save is also written to `data/audit.log`.
+Each file carries a SHA-256 of its objects, so a restore can tell when a file was edited, and a build rollback won't restore Website Management from an edited one. A section that couldn't be read is stored as `null` and listed in `unreadSections`, never as an empty list. Each save is also written to `data/audit.log`.
 
 ## Customer report
 
@@ -223,7 +223,7 @@ READ_ONLY=1 WPA_ENV_FILE=~/secure/customer.env WPA_DATA_DIR=~/secure/customer-da
 
 ## Using it from other machines
 
-The server listens on 127.0.0.1:3110, so only this computer can reach it. To serve other machines, set `HOST` (for example `0.0.0.0`) and limit clients with `ALLOWED_IPS`. The Host and Origin guard refuses requests that name another host, and refuses changes from other pages. See `.env.example`.
+The server listens on 127.0.0.1:3110, so only this computer can reach it. To serve other machines, set `HOST` (for example `0.0.0.0`) and limit clients with `ALLOWED_IPS`. The Host and Origin guard refuses requests that name another host, and refuses changes from other pages. Pages on other sites can't show the tool in a frame or call its API. See `.env.example`.
 
 ## Known gaps
 

@@ -14,7 +14,7 @@ import { collect, readEvents, importEvents, storeSummary } from "../backend/dist
 import { addAllow, planAllow, undoAllow, loadPilotRecord } from "../backend/dist/services/pilot-service.js";
 import { moveWave, promotionView, setPilotEnabled, undoWave } from "../backend/dist/services/promote-service.js";
 import { previewRetire, retire, restoreRetire } from "../backend/dist/services/retire-service.js";
-import { designFor, dryRun, execute, getBuild } from "../backend/dist/services/build-service.js";
+import { designFor, dryRun, execute, getBuild, rollback } from "../backend/dist/services/build-service.js";
 import { device, wcPolicy } from "./fixtures.mjs";
 
 const T = "00000000-0000-4000-a000-000000000001";
@@ -344,4 +344,63 @@ test("the build, waves and Allow treat a server on the computer pilot: refused b
   fake.policies.get(ids.policyId).appliesTo = { endpoints: ["w1", "srv"], endpointGroups: [] };
   const plan = await planAllow(dataDir, ctx, "cdn.example.com");
   assert.match(plan.notes.join(" "), /assigned to a server \(DC01\)/);
+});
+
+test("narrow Allow refuses a whole top-level domain, a public suffix or a shared platform", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "wpa-d3b-"));
+  await initState(root, "0.3.7");
+  dataDir = path.join(root, "data");
+  const fake = new FakeSophos();
+  seedPilot(fake);
+  const ctx = ctxOf(fake);
+  for (const host of ["com", "http://com/", "co.uk", "blogspot.com"]) {
+    const plan = await planAllow(dataDir, ctx, host);
+    assert.equal(plan.steps.length, 0, host);
+    assert.match(plan.problems.join(" "), /a narrow Allow takes one host/, host);
+    await assert.rejects(addAllow(dataDir, ctx, host), /narrow Allow takes one host/, host);
+  }
+  assert.deepEqual((await planAllow(dataDir, ctx, "myblog.blogspot.com")).problems, [], "one blog is one host");
+  assert.ok(fake.calls.every((c) => c.startsWith("GET ")), "nothing was written");
+});
+
+test("rollback restores Website Management only from a snapshot whose hash still matches", async () => {
+  const root = mkdtempSync(path.join(tmpdir(), "wpa-d3k-"));
+  await initState(root, "0.3.7");
+  dataDir = path.join(root, "data");
+  const fake = new FakeSophos();
+  const id = randomUUID();
+  fake.localSites.set(id, { id, url: "kept.example.com", tags: ["staff"] });
+  const tool = { name: "web-profiles-assistant", version: "0.3.7" };
+  const { runReadiness } = await import("../backend/dist/services/readiness.js");
+  const r = await runReadiness(dataDir, fake, { id: T, name: "Test tenant", region: "us01", apiHost: "x", credentialType: "tenant" }, tool);
+  const snapFile = path.join(dataDir, "snapshots", T, r.snapshot.file);
+  const record = (buildId) => {
+    const b = { id: buildId, tenantId: T, tenantName: "Test tenant", createdAt: new Date().toISOString(), status: "built", snapshotFile: r.snapshot.file, pilot: { profileKey: "k", name: "p", enabled: false, targets: {} }, steps: [], checks: [] };
+    mkdirSync(path.join(dataDir, "builds", T), { recursive: true });
+    writeFileSync(path.join(dataDir, "builds", T, `${buildId}.json`), JSON.stringify(b));
+  };
+  const ctx = ctxOf(fake);
+
+  // Intact: an entry deleted since the snapshot is put back.
+  fake.localSites.clear();
+  const good = randomUUID();
+  record(good);
+  const plan = await rollback(dataDir, ctx, good, { dryRun: true });
+  assert.deepEqual(plan.restorePlan.map((s) => `${s.op} ${s.url}`), ["create kept.example.com"]);
+  assert.equal(plan.restoreRefused, undefined);
+
+  // Edited after it was saved: nothing is restored from it, and the rollback says so.
+  const snap = JSON.parse(readFileSync(snapFile, "utf8"));
+  snap.objects.websiteManagement.push({ id: "x", url: "*.added-by-hand.example", tags: ["staff"] });
+  writeFileSync(snapFile, JSON.stringify(snap));
+  const bad = randomUUID();
+  record(bad);
+  const dry = await rollback(dataDir, ctx, bad, { dryRun: true });
+  assert.deepEqual(dry.restorePlan, []);
+  assert.match(dry.restoreRefused, /changed after it was saved/);
+  const done = await rollback(dataDir, ctx, bad, { dryRun: false });
+  assert.equal(done.status, "rollback-partial");
+  assert.ok(done.rollback.steps.some((s) => s.kind === "website-management" && s.status === "failed" && /changed after it was saved/.test(s.error)));
+  assert.equal(fake.localSites.size, 0, "no entry was created from the edited snapshot");
+  assert.ok(fake.calls.every((c) => c.startsWith("GET ")), "nothing was written");
 });

@@ -64,8 +64,10 @@ export async function audit(entry: Omit<AuditEntry, "id" | "ts">): Promise<void>
     await fs.mkdir(dir, { recursive: true });
     const quick = Date.now() < lockedUntil;
     try {
-      await withRetry(SECTION, "append audit.log", () => fs.appendFile(file, JSON.stringify(full) + "\n", { encoding: "utf8" }), quick ? 0 : undefined);
+      await withRetry(SECTION, "append audit.log", () => fs.appendFile(file, JSON.stringify(full) + "\n", { encoding: "utf8", mode: 0o600 }), quick ? 0 : undefined);
       lockedUntil = 0;
+      // It names tenants, devices and sites: readable by this account only, like the tool's other files. The mode above only applies to a new file.
+      await fs.chmod(file, 0o600).catch(() => {});
     } catch (err) {
       if (isLock(err)) lockedUntil = Date.now() + LOCKED_QUICK_MS;
       throw err;

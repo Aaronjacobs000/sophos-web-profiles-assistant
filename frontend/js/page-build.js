@@ -134,7 +134,7 @@ function render() {
         const plan = await api.post(`/api/build/${t}/${b.dataset.rollback}/rollback`, { dryRun: true });
         const objs = plan.steps.filter((s) => s.id && s.status !== "deleted");
         const wm = plan.restorePlan?.length ?? 0;
-        if (!window.confirm(`Roll back: delete ${objs.map((s) => `${s.kind} "${s.name}"`).join(", ")} in that order${wm ? `, and ${wm} Website Management changes from the snapshot` : ""}?`)) return;
+        if (!window.confirm(`Roll back: delete ${objs.map((s) => `${s.kind} "${s.name}"`).join(", ")} in that order${wm ? `, and ${wm} Website Management changes from the snapshot` : ""}?${plan.restoreRefused ? `\n\n${plan.restoreRefused}` : ""}`)) return;
         lastPlan = await api.post(`/api/build/${t}/${b.dataset.rollback}/rollback`, { dryRun: false });
         builds = (await api.get(`/api/build/${t}`)).items;
         render();

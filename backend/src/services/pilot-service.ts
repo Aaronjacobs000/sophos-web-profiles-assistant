@@ -166,6 +166,12 @@ export async function planAllow(dataDir: string, ctx: TenantContext, host: strin
     plan.problems.push(`"${host}" isn't a single host a site list can allow narrowly.`);
     return plan;
   }
+  // A host from an event can be a whole top-level domain or a shared platform; allowing it would let far more than one site through.
+  const broad = broadness(parseSite(site));
+  if (broad.broad) {
+    plan.problems.push(`${site} ${broad.why ?? `is broad (${broad.reason})`}: a narrow Allow takes one host. Add an entry this broad in Sophos Fusion if you mean it.`);
+    return plan;
+  }
   const profile = await getProfile(ro, t, pilot.profileId).catch((err) => {
     if (errorStatus(err) === 404) throw new Error("The pilot's profile no longer exists in the tenant.");
     throw err;
@@ -192,8 +198,6 @@ export async function planAllow(dataDir: string, ctx: TenantContext, host: strin
     const servers = (await listAllEndpoints(ro, t)).filter((d) => policy.appliesTo!.endpoints!.includes(d.id) && deviceEligibility(d).kind === "server");
     if (servers.length) plan.notes.push(`The pilot is assigned to ${servers.length === 1 ? "a server" : "servers"} (${servers.map((d) => deviceEligibility(d).hostname).join(", ")}), which a Web Control policy doesn't apply to. Remove ${servers.length === 1 ? "it" : "them"} in Sophos Fusion; the tool won't add servers.`);
   }
-  const broad = broadness(parseSite(site));
-  if (broad.broad) plan.notes.push(`${site} ${broad.why ? `${broad.why}` : `is broad (${broad.reason})`}: an Allow lets through more than one organization's sites.`);
   if (own) {
     const name = (await getSiteList(ro, t, own.id)).name;
     plan.steps.push({ op: "add-site", listId: own.id, listName: name, site });

@@ -4,6 +4,7 @@
  */
 
 import path from "node:path";
+import { promises as fs } from "node:fs";
 import { applyEnvToProcess, readEnvFile, setEnvValues, writeEnvFile, type EnvFile } from "./config/env-file.js";
 import {
   MANAGED_ENV_KEYS,
@@ -81,6 +82,12 @@ export function tenantAllowList(env: NodeJS.ProcessEnv = process.env): Set<strin
 export async function initState(repoRoot: string, appVersion: string): Promise<AppState> {
   version = appVersion;
   const { envPath, dataDir } = storagePaths(repoRoot);
+  // The data folder's file names carry tenant ids and names: only this account may list or open it.
+  // Best effort: a folder that can't be made fails later, where the save says why.
+  await fs.mkdir(dataDir, { recursive: true, mode: 0o700 }).catch(() => {});
+  await fs.chmod(dataDir, 0o700).catch(() => {});
+  // A credential file made by hand (copied from .env.example) has the default mode; the tool's own saves use 0600.
+  await fs.chmod(envPath, 0o600).catch(() => {});
   const envFile = await readEnvFile(envPath);
   applyEnvToProcess(envFile, MANAGED_ENV_KEYS as unknown as string[]);
   state = {
