@@ -222,11 +222,11 @@ test("the Pilot page says the pilot policy is gone, and what to do, when Sophos 
   const live = await withTenant(b.tenant, () => readPilotPolicy(b.ctx, bPilot));
   assert.deepEqual(live, { policy: { id: b.ids.policyId, name: "WF pilot: Example profile", enabled: false, priority: 1, endpoints: ["w1"], endpointGroups: [], users: [], userGroups: [] } });
 
-  // Any other answer isn't proof it's gone: no policy, and no claim that it's gone.
+  // Any other answer isn't proof it's gone: no policy, no claim that it's gone, and why it wasn't read (v0.3.11).
   const c = await setup();
   c.tenant.policyGetStatus = 403;
   const cPilot = await activePilot(c.dataDir, T);
-  assert.deepEqual(await withTenant(c.tenant, () => readPilotPolicy(c.ctx, cPilot)), { policy: null });
+  assert.deepEqual(await withTenant(c.tenant, () => readPilotPolicy(c.ctx, cPilot)), { policy: null, unread: "Sophos API error 403: Forbidden" });
 });
 
 // Last in this file: it configures a mock tenant credential in this process's environment.

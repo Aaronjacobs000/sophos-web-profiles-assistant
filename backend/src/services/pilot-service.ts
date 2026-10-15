@@ -109,15 +109,16 @@ export interface PilotPolicyView {
 /**
  * Reads the pilot policy for the Pilot page. When Sophos answers 404 it's
  * gone (deleted in Sophos Fusion, or by a rollback Sophos answered unclearly),
- * and problem says so and what to do. Any other failed read gives no policy
- * and no problem, since it doesn't show the policy is gone.
+ * and problem says so and what to do. Any other failed read (a 403, a 5xx, no
+ * answer in time) doesn't show the policy is gone: unread says why it wasn't
+ * read, and there's no problem.
  */
-export async function readPilotPolicy(ctx: TenantContext, pilot: PilotInfo): Promise<{ policy: PilotPolicyView | null; problem?: string }> {
+export async function readPilotPolicy(ctx: TenantContext, pilot: PilotInfo): Promise<{ policy: PilotPolicyView | null; problem?: string; unread?: string }> {
   try {
     const p = await getPolicy(new ReadOnlyApi(ctx.client), ctx.tenantId, pilot.policyId);
     return { policy: { id: p.id, name: p.name, enabled: p.enabled ?? true, priority: p.priority, endpoints: p.appliesTo?.endpoints ?? [], endpointGroups: p.appliesTo?.endpointGroups ?? [], users: p.appliesTo?.users ?? [], userGroups: p.appliesTo?.userGroups ?? [] } };
   } catch (err) {
-    if (errorStatus(err) !== 404) return { policy: null };
+    if (errorStatus(err) !== 404) return { policy: null, unread: err instanceof Error ? err.message : String(err) };
     return { policy: null, problem: `The pilot policy "${pilot.policyName}" is no longer in the tenant. Roll the build back on the Build page to remove what's left of it, or build a new pilot.` };
   }
 }

@@ -30,6 +30,17 @@ function pilotCard() {
       <p style="margin-top:10px">${esc(view.problem)}</p>
       <div class="head-actions"><a class="btn btn-small" href="/build.html?tenant=${encodeURIComponent(tenantId)}">Open the Build page</a></div></section>`;
   }
+  if (!pol && view.policyUnread) {
+    // Any other failed read (a 403, a 5xx, no answer in time) doesn't show the policy is gone: say the read failed, and offer a retry.
+    return `<section class="panel-card"><div class="card-head"><h2>Pilot policy</h2><span class="spacer"></span><span class="tag tag-warn">Not read</span></div>
+      <ul class="order-list">
+        <li><span class="o-name">${esc(p.policyName)}<span class="o-kind">Policy</span></span><span class="o-meta">not read</span></li>
+        <li><span class="o-name">${esc(p.profileName)}<span class="o-kind">Profile</span></span><span class="o-meta"><a href="/build.html?tenant=${encodeURIComponent(tenantId)}">Build</a></span></li>
+      </ul>
+      <p style="margin:10px 0;overflow-wrap:anywhere">The tool couldn't read the pilot policy (${esc(view.policyUnread)}). That doesn't mean it's gone. Retry, or check it in Sophos Fusion.</p>
+      ${rollbackUnfinishedBanner(p, tenantId)}
+      <div class="head-actions"><button class="btn btn-small" data-retry>Retry</button></div></section>`;
+  }
   const targets = pol ? pol.endpoints.length + pol.endpointGroups.length + pol.users.length + pol.userGroups.length : 0;
   return `<section class="panel-card"><div class="card-head"><h2>Pilot policy</h2><span class="spacer"></span>${pol ? (pol.enabled ? '<span class="tag tag-ok">On</span>' : '<span class="tag tag-warn">Off</span>') : '<span class="tag tag-bad">Not found</span>'}</div>
     <ul class="order-list">
@@ -73,8 +84,13 @@ function tiles() {
   </div>`;
 }
 
+// Why Allow is off when the pilot policy is gone (a 404).
+const ALLOW_OFF = "Allow is off: the pilot policy is no longer in the tenant.";
+
 function digestHtml() {
   const d = digest;
+  const gone = !view.policy && !!view.problem;
+  const allowAttrs = !view.pilot ? " disabled" : gone ? ` disabled title="${escAttr(ALLOW_OFF)}"` : "";
   const max = Math.max(1, ...d.byDay.map((x) => x.warned + x.blocked + x.other));
   const daysRows = d.byDay
     .map((x) => `<tr><td class="cell-nowrap">${esc(x.day)}</td><td class="num">${n(x.warned)}</td><td class="num">${n(x.blocked)}</td><td class="num">${n(x.other)}</td><td class="day-bar-cell"><span class="day-bar"><span class="b-warn" style="width:${(x.warned / max) * 100}%"></span><span class="b-block" style="width:${(x.blocked / max) * 100}%"></span></span></td></tr>`)
@@ -82,12 +98,13 @@ function digestHtml() {
   const reasons = d.byReason.slice(0, 8).map((r) => `<li><span class="o-name">${esc(r.reason)}</span><span class="o-meta">${n(r.hits)}</span></li>`).join("");
   const hosts = d.hosts
     .slice(0, 100)
-    .map((h) => `<tr><td class="cu-site"><b>${esc(h.host)}</b><span class="t-sub">${esc(h.reasons.join("; "))}</span></td><td class="num">${n(h.byAction.warned)}</td><td class="num">${n(h.byAction.blocked)}</td><td class="num">${n(h.users)}</td><td class="num">${n(h.devices)}</td><td class="cell-nowrap">${when(h.lastSeen)}</td><td><button class="btn btn-small" data-allow="${escAttr(h.host)}"${view.pilot ? "" : " disabled"}>Allow</button></td></tr>`)
+    .map((h) => `<tr><td class="cu-site"><b>${esc(h.host)}</b><span class="t-sub">${esc(h.reasons.join("; "))}</span></td><td class="num">${n(h.byAction.warned)}</td><td class="num">${n(h.byAction.blocked)}</td><td class="num">${n(h.users)}</td><td class="num">${n(h.devices)}</td><td class="cell-nowrap">${when(h.lastSeen)}</td><td><button class="btn btn-small" data-allow="${escAttr(h.host)}"${allowAttrs}>Allow</button></td></tr>`)
     .join("");
   return `
     ${tiles()}
     ${d.imported ? `<div class="banner banner-warn">${n(d.imported)} of these events were imported from a file, not collected from this tenant.</div>` : ""}
     <section class="panel-card"><div class="card-head"><h2>Sites the pilot warned or blocked</h2><span class="spacer"></span><span class="hint">${d.from ? `${when(d.from)} to ${when(d.to)}` : ""}</span></div>
+      ${hosts && gone ? `<p class="hint" data-allow-off>${esc(ALLOW_OFF)}</p>` : ""}
       ${hosts ? `<div class="table-wrap"><table class="data-table cu-table"><thead><tr><th>Site and reason</th><th class="num">Warned</th><th class="num">Blocked</th><th class="num">Users</th><th class="num">Devices</th><th>Last seen</th><th></th></tr></thead><tbody>${hosts}</tbody></table></div>
         <p class="hint">Allow adds the exact host to the pilot's Allow list, never its parent domain. A file type warning (such as an installer download) isn't a category decision; allowing the host lets every file type from it through.</p>` : '<p class="muted">No warned or blocked hits in this period.</p>'}
     </section>
@@ -97,7 +114,15 @@ function digestHtml() {
     </div>`;
 }
 
+/** In place of the digest when Pilot devices only is on and the pilot policy couldn't be read: say so, and offer a retry. */
+function filterUnreadHtml() {
+  return `<section class="panel-card"><h2>Pilot devices only</h2>
+    <p style="margin-bottom:10px;overflow-wrap:anywhere">The tool couldn't read which devices are on the pilot (${esc(digest.pilotUnread)}), so the digest isn't shown. Retry, or untick Pilot devices only to see every device.</p>
+    <div class="head-actions"><button class="btn btn-small" data-retry>Retry</button></div></section>`;
+}
+
 function headline() {
+  if (digest?.pilotUnread) return "Couldn't read the pilot's devices";
   if (!digest || !digest.total) return days > 0 ? `No hits in the last ${days === 1 ? "day" : `${days} days`}` : "No hits stored";
   return `${n(digest.byAction.warned)} warned and ${n(digest.byAction.blocked)} blocked ${days > 0 ? `in the last ${days === 1 ? "day" : `${days} days`}` : "in all stored events"}`;
 }
@@ -118,10 +143,10 @@ function render() {
       <div class="score-main">
         <section class="panel-card"><div class="cu-options">
           <label>Period <select id="days">${[[1, "Last day"], [7, "Last 7 days"], [30, "Last 30 days"], [0, "All stored"]].map(([v, l]) => `<option value="${v}"${v === days ? " selected" : ""}>${l}</option>`).join("")}</select></label>
-          <label class="checkbox"><input type="checkbox" id="pilotonly"${pilotOnly ? " checked" : ""}${view.policy?.endpoints?.length ? "" : " disabled"}/> Pilot devices only</label>
+          <label class="checkbox"><input type="checkbox" id="pilotonly"${pilotOnly ? " checked" : ""}${view.policy?.endpoints?.length || pilotOnly ? "" : " disabled"}/> Pilot devices only</label>
           ${digest?.otherWebEvents ? `<span class="hint">${n(digest.otherWebEvents)} other web events (threat blocks) stored, not part of the digest.</span>` : ""}
         </div></section>
-        ${digest ? digestHtml() : ""}
+        ${digest ? (digest.pilotUnread ? filterUnreadHtml() : digestHtml()) : ""}
       </div>
     </div>`;
   wire();
@@ -209,6 +234,18 @@ function wire() {
     pilotOnly = e.target.checked;
     await refresh();
   });
+  main.querySelectorAll("[data-retry]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      b.disabled = true;
+      b.innerHTML = '<span class="spinner"></span>Reading';
+      try {
+        await refresh();
+      } catch (err) {
+        toast(err.message, "warn", 9000);
+        render();
+      }
+    }),
+  );
   main.querySelectorAll("[data-allow]").forEach((b) =>
     b.addEventListener("click", async () => {
       try {

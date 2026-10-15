@@ -13,8 +13,6 @@ import { collect, importEvents, readEvents, setEnabled, storeSummary } from "../
 import { activePilot, addAllow, loadPilotRecord, planAllow, readPilotPolicy, undoAllow } from "../services/pilot-service.js";
 import { moveWave, promotionView, setPilotEnabled, undoWave } from "../services/promote-service.js";
 import { previewRetire, restoreRetire, retire, retireOverview } from "../services/retire-service.js";
-import { ReadOnlyApi } from "../sophos/api/requester.js";
-import { getPolicy } from "../sophos/api/policies.js";
 import { listBuilds } from "../services/build-service.js";
 
 export const pilotRouter = Router();
@@ -43,12 +41,12 @@ pilotRouter.get("/pilot/:tenantId", async (req, res) => {
   const dataDir = getState().dataDir;
   try {
     const pilot = await activePilot(dataDir, ctx.tenantId);
-    // A pilot policy that answers 404 comes with a problem that says it's gone and what to do.
-    const { policy, problem } = pilot ? await readPilotPolicy(ctx, pilot) : { policy: null, problem: undefined };
+    // A pilot policy that answers 404 comes with a problem that says it's gone and what to do; any other failed read, with why it wasn't read.
+    const { policy, problem, unread } = pilot ? await readPilotPolicy(ctx, pilot) : { policy: null, problem: undefined, unread: undefined };
     // An Allow whose build was rolled back went with it.
     const allows = (await loadPilotRecord(dataDir, ctx.tenantId)).allows;
     const builds = new Map((await listBuilds(dataDir, ctx.tenantId)).map((b) => [b.id, b.status]));
-    res.json({ pilot, policy, ...(problem ? { problem } : {}), store: await storeSummary(dataDir, ctx.tenantId), allows: allows.map((a) => ({ ...a, buildStatus: builds.get(a.buildId) ?? "unknown" })) });
+    res.json({ pilot, policy, ...(problem ? { problem } : {}), ...(unread ? { policyUnread: maskSecrets(unread) } : {}), store: await storeSummary(dataDir, ctx.tenantId), allows: allows.map((a) => ({ ...a, buildStatus: builds.get(a.buildId) ?? "unknown" })) });
   } catch (err) {
     fail(res, err, 500);
   }
@@ -91,19 +89,24 @@ pilotRouter.get("/pilot/:tenantId/digest", async (req, res) => {
     const events = await readEvents(dataDir, ctx.tenantId, since?.slice(0, 10));
     let list = events;
     let pilotDevices: string[] | null = null;
+    // Set when the pilot policy couldn't be read (not a 404): its devices are unknown, so nothing is counted rather than counting none.
+    let pilotUnread: string | undefined;
     if (req.query.pilotOnly === "1") {
       const pilot = await activePilot(dataDir, ctx.tenantId);
-      const p = pilot ? await getPolicy(new ReadOnlyApi(ctx.client), ctx.tenantId, pilot.policyId).catch(() => null) : null;
-      pilotDevices = p?.appliesTo?.endpoints ?? [];
-      const set = new Set(pilotDevices);
+      // A pilot policy that answers 404 is gone, so no device is on it.
+      const read = pilot ? await readPilotPolicy(ctx, pilot) : null;
+      pilotUnread = read?.unread;
+      pilotDevices = pilotUnread ? null : read?.policy?.endpoints ?? [];
+      const set = new Set(pilotDevices ?? []);
       list = events.filter((e) => e.endpoint_id && set.has(e.endpoint_id));
     }
     const digest = summarize(list, since);
     res.json({
       days,
       since: since ?? null,
-      pilotOnly: pilotDevices !== null,
+      pilotOnly: req.query.pilotOnly === "1",
       pilotDevices: pilotDevices?.length ?? null,
+      ...(pilotUnread ? { pilotUnread: maskSecrets(pilotUnread) } : {}),
       imported: list.filter((e) => e._imported && e.type === WEB_CONTROL_EVENT && (!since || String(e.created_at ?? "") >= since)).length,
       otherWebEvents: list.filter((e) => e.type !== WEB_CONTROL_EVENT).length,
       ...digest,

@@ -15,7 +15,8 @@
  *             Management back from the snapshot. A delete with no clear
  *             answer (a 5xx, no answer in time, or a dropped connection)
  *             is read back too, since it can still go through, and audited
- *             with what the read-back found.
+ *             with what the read-back found. So is a delete answered 404,
+ *             which was already gone, so its entry matches the step.
  *
  * Deletes go only to ids this tool recorded, never by name: other tools can
  * share a tenant.
@@ -548,6 +549,8 @@ export async function rollback(
     const entry = { tenantId: t, action: "delete", resource: s.kind, resourceId: s.id, detail: { name: s.name, rollbackOf: record.id } };
     // Set when the delete got no clear answer (a 5xx, no answer in time, or a dropped connection), which can come back for a delete that went through.
     let unclear: { said: string; reason: string } | undefined;
+    // Set when Sophos answered 404, so the object was already gone. Audited below, with what the read-back found, to match the step.
+    let answered404: string | undefined;
     try {
       await deleter[s.kind](s.id!);
       await auditOrWarn({ ...entry, ok: true });
@@ -558,13 +561,13 @@ export async function rollback(
         // Audited below, with what the read-back found.
         const reason = (isUnclearWrite(err) ? err.reason : message).replace(/\.$/, "");
         unclear = { said: status !== undefined && status >= 500 ? `Sophos answered ${status}` : reason, reason };
+      } else if (status === 404) {
+        answered404 = message.replace(/\.$/, "");
       } else {
         await auditOrWarn({ ...entry, ok: false, error: message });
-        if (status !== 404) {
-          s.status = "delete-failed";
-          out.push({ kind: s.kind, name: s.name, id: s.id, status: "failed", error: message });
-          continue;
-        }
+        s.status = "delete-failed";
+        out.push({ kind: s.kind, name: s.name, id: s.id, status: "failed", error: message });
+        continue;
       }
     }
     // Confirm it's gone: GET by id answers 404 at once (retested 13/10/2026). A read that fails another way is a miss.
@@ -578,14 +581,17 @@ export async function rollback(
       }
     });
     s.status = gone.value ? "deleted" : "delete-failed";
+    const read = gone.unread ? `A read-back couldn't read it (${gone.unread.replace(/\.$/, "")}), so it may still be there.` : "A read-back still found it, so it wasn't deleted.";
     if (unclear === undefined) {
       out.push({ kind: s.kind, name: s.name, id: s.id, status: gone.value ? "deleted, 404 on read-back" : "still there after delete" });
+      if (answered404 !== undefined) {
+        await auditOrWarn(gone.value ? { ...entry, ok: true, detail: { ...entry.detail, note: "Sophos answered 404, so it was already gone, and a read-back found it gone (404)" } } : { ...entry, ok: false, error: `${answered404}. ${read}` });
+      }
     } else if (gone.value) {
       const note = `${unclear.said}, then a read-back found it gone (404)`;
       await auditOrWarn({ ...entry, ok: true, detail: { ...entry.detail, note } });
       out.push({ kind: s.kind, name: s.name, id: s.id, status: `deleted: ${note}` });
     } else {
-      const read = gone.unread ? `A read-back couldn't read it (${gone.unread.replace(/\.$/, "")}), so it may still be there.` : "A read-back still found it, so it wasn't deleted.";
       const error = `${unclear.reason}. ${read}`;
       await auditOrWarn({ ...entry, ok: false, error });
       out.push({ kind: s.kind, name: s.name, id: s.id, status: "failed", error });

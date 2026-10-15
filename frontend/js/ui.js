@@ -52,6 +52,12 @@ export function buildHeadline(rec, readOnly) {
   }
 }
 
+/** Text as a sentence: a message from Sophos, such as "Sophos API error 500: InternalServerError", often has no closing full stop. */
+export function sentence(text) {
+  const t = String(text ?? "").trim();
+  return !t || /[.!?]$/.test(t) ? t : `${t}.`;
+}
+
 /** The note on a pilot whose rollback didn't finish: what it left in the tenant, why, and what to do next. */
 export function rollbackUnfinishedBanner(pilot, tenantId) {
   const r = pilot?.rollbackUnfinished;
@@ -60,9 +66,20 @@ export function rollbackUnfinishedBanner(pilot, tenantId) {
   const lists = r.left.filter((s) => s.kind === "site-list").length;
   const parts = [...named, ...(lists ? [plural(lists, "site list")] : [])];
   const left = parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}` : parts[0] ?? "the pilot";
+  const reason = sentence(r.reason);
   // The reason can hold a long URL with an id, so it wraps anywhere.
-  return `<div class="banner banner-warn" style="overflow-wrap:anywhere;margin-bottom:10px"><strong>The rollback didn't finish.</strong> Still in the tenant: ${esc(left)}.${r.reason ? ` ${esc(r.reason)}` : ""}
+  return `<div class="banner banner-warn" style="overflow-wrap:anywhere;margin-bottom:10px"><strong>The rollback didn't finish.</strong> Still in the tenant: ${esc(left)}.${reason ? ` ${esc(reason)}` : ""}
     Roll it back again from the <a href="/build.html?tenant=${encodeURIComponent(tenantId)}">Build</a> page, or carry on with the pilot.</div>`;
+}
+
+/** A retire record's status in plain words, for the Retired table and the messages after a retire or restore. */
+export function retireStatus(status) {
+  return { retired: "Retired", partial: "Retire didn't finish", failed: "Retire failed", restored: "Restored", "restore-partial": "Restore didn't finish" }[status] ?? "Retire";
+}
+
+/** A retire step's status in plain words. A planned step in a record was never sent, because the retire stops at the first failure. */
+export function retireStepStatus(status) {
+  return { planned: "not sent", done: "done", failed: "failed", restored: "restored", "restore-failed": "restore failed" }[status] ?? "unknown";
 }
 
 /**

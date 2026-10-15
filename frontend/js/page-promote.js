@@ -4,7 +4,7 @@
 
 import { api } from "./api.js";
 import { currentTenantId, getStatus, initShell, setTenant } from "./shell.js";
-import { esc, escAttr, plural, rollbackUnfinishedBanner } from "./ui.js";
+import { esc, escAttr, plural, retireStatus, retireStepStatus, rollbackUnfinishedBanner } from "./ui.js";
 import { icon } from "./icons.js";
 import { toast } from "./toast.js";
 import { diffHtml } from "./diff-view.js";
@@ -98,7 +98,7 @@ function retireCard() {
 
 function recordsCard() {
   const rows = retire.records
-    .map((r) => `<tr><td class="cell-nowrap">${when(r.at)}</td><td class="cell-nowrap">${esc(r.tags.join(", "))}</td><td><span class="tag ${RETIRE_STATUS[r.status] ?? "tag-muted"}">${esc(r.status)}</span></td><td class="cu-why">${esc(r.steps.map((s) => `${s.op === "policy-tags" ? s.policyName : s.url}: ${s.status}${s.readBack ? ` (${s.readBack})` : ""}`).join("; "))}</td>
+    .map((r) => `<tr><td class="cell-nowrap">${when(r.at)}</td><td class="cell-nowrap">${esc(r.tags.join(", "))}</td><td><span class="tag ${RETIRE_STATUS[r.status] ?? "tag-muted"}">${esc(retireStatus(r.status))}</span></td><td class="cu-why">${esc(r.steps.map((s) => `${s.op === "policy-tags" ? s.policyName : s.url}: ${retireStepStatus(s.status)}${s.readBack ? ` (${s.readBack})` : ""}`).join("; "))}</td>
       <td class="cell-nowrap">${["retired", "partial", "restore-partial", "failed"].includes(r.status) ? `<button class="btn btn-small" data-restore="${escAttr(r.id)}">Restore</button>` : ""} <button class="btn btn-small" data-diff="${escAttr(r.snapshotFile)}">Compare with snapshot</button></td></tr>`)
     .join("");
   return `<section class="panel-card"><h2>Retired</h2>${rows ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>When</th><th>Tags</th><th>Status</th><th>Steps</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="muted">Nothing retired yet.</p>'}</section>`;
@@ -204,7 +204,7 @@ function wire() {
     e.target.innerHTML = '<span class="spinner"></span>Retiring';
     try {
       const r = await api.post(`/api/retire/${t}/execute`, { tags: retirePlan.tags, confirm: !!confirmBox?.checked });
-      toast(`Retire: ${r.status}.`, r.status === "retired" ? "ok" : "warn", 9000);
+      toast(`${retireStatus(r.status)}.`, r.status === "retired" ? "ok" : "warn", 9000);
       retirePlan = null;
       chosenTags = [];
     } catch (err) {
@@ -219,7 +219,7 @@ function wire() {
       b.innerHTML = '<span class="spinner"></span>Restoring';
       try {
         const r = await api.post(`/api/retire/${t}/${encodeURIComponent(b.dataset.restore)}/restore`, {});
-        toast(`Restore: ${r.status}.`, r.status === "restored" ? "ok" : "warn", 9000);
+        toast(`${retireStatus(r.status)}.`, r.status === "restored" ? "ok" : "warn", 9000);
       } catch (err) {
         toast(err.message, "warn", 10000);
       }
