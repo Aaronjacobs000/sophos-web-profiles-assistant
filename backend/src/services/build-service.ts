@@ -12,7 +12,8 @@
  *   rollback  deletes what the build created in reverse order (policy, then
  *             profiles, then site lists; the API refuses to delete a profile
  *             or list still in use), verifies each 404, and puts Website
- *             Management back from the snapshot.
+ *             Management back from the snapshot. A delete Sophos answers
+ *             with a 5xx is read back too, since it can still go through.
  *
  * Deletes go only to ids this tool recorded, never by name: other tools can
  * share a tenant.
@@ -56,7 +57,7 @@ import { compareToSnapshot, planWebsiteManagementRestore, type RestoreStep } fro
 import { buildSnapshot, canonicalJson, type Snapshot } from "../domain/snapshot.js";
 import { readInventory } from "./inventory-reader.js";
 import { auditedWrite, auditOrWarn } from "./audit-log.js";
-import { createChecked, readBack } from "./write-check.js";
+import { createChecked, isUnclearWrite, readBack } from "./write-check.js";
 import { loadSnapshot } from "./snapshot-store.js";
 import { runReadiness } from "./readiness.js";
 import { readText, saveFile } from "./safe-files.js";
@@ -542,26 +543,38 @@ export async function rollback(
     "site-list": (id) => deleteSiteList(api, t, id),
   };
   for (const s of toDelete) {
+    // Set when Sophos answered the delete with a 5xx, which can come back for a delete that went through.
+    let answered5xx: { status: number; reason: string } | undefined;
     try {
       await auditedWrite({ tenantId: t }, "delete", s.kind, s.id!, () => deleter[s.kind](s.id!), { name: s.name, rollbackOf: record.id });
     } catch (err) {
-      if (errorStatus(err) !== 404) {
+      const status = errorStatus(err);
+      if (status !== undefined && status >= 500) answered5xx = { status, reason: (isUnclearWrite(err) ? err.reason : err instanceof Error ? err.message : String(err)).replace(/\.$/, "") };
+      else if (status !== 404) {
         s.status = "delete-failed";
         out.push({ kind: s.kind, name: s.name, id: s.id, status: "failed", error: err instanceof Error ? err.message : String(err) });
         continue;
       }
     }
-    // Confirm it's gone: GET by id answers 404 at once (retested 13/10/2026).
+    // Confirm it's gone: GET by id answers 404 at once (retested 13/10/2026). A read that fails another way is a miss.
     const gone = await readBack(async () => {
       try {
         await getter[s.kind](s.id!);
         return null;
       } catch (err) {
-        return errorStatus(err) === 404 ? true : null;
+        if (errorStatus(err) === 404) return true;
+        throw err;
       }
     });
     s.status = gone.value ? "deleted" : "delete-failed";
-    out.push({ kind: s.kind, name: s.name, id: s.id, status: gone.value ? "deleted, 404 on read-back" : "still there after delete" });
+    if (answered5xx === undefined) {
+      out.push({ kind: s.kind, name: s.name, id: s.id, status: gone.value ? "deleted, 404 on read-back" : "still there after delete" });
+    } else if (gone.value) {
+      out.push({ kind: s.kind, name: s.name, id: s.id, status: `deleted: Sophos answered ${answered5xx.status}, then a read-back found it gone (404)` });
+    } else {
+      const read = gone.unread ? `A read-back couldn't read it (${gone.unread.replace(/\.$/, "")}), so it may still be there.` : "A read-back still found it, so it wasn't deleted.";
+      out.push({ kind: s.kind, name: s.name, id: s.id, status: "failed", error: `${answered5xx.reason}. ${read}` });
+    }
   }
   for (const step of restorePlan) {
     try {

@@ -239,3 +239,23 @@ a.ctx-chip:hover { border-color: var(--line-2); background: var(--glass-2); text
 .wave-list .w-name { font-weight: 650; color: var(--ink-0); }
 .wave-list .w-devs { font-size: 12.5px; color: var(--ink-2); overflow-wrap: anywhere; }
 .tag-cell { display: flex; flex-wrap: wrap; gap: 4px; }
+
+/* ---------- phone width: the rail becomes a bar above the page ---------- */
+@media (max-width: 760px) {
+  :root { --rail-w: 0px; }
+  /* First line: the mark, then the tool and settings icons. Second line: the steps, the current one named. */
+  .rail { position: static; width: auto; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px 2px; padding: 10px 16px; border-right: 0; border-bottom: 1px solid var(--line); overflow: visible; }
+  .rail-brand { padding: 0; margin-right: auto; }
+  .rail-group { margin-top: 0; display: flex; align-items: center; gap: 2px; }
+  .rail-group:has(.steps) { order: 1; flex-basis: 100%; }
+  .rail-note { display: none; }
+  .steps { flex-direction: row; flex-wrap: wrap; gap: 2px; }
+  .step-item { display: flex; align-items: center; gap: 8px; padding: 6px; }
+  .step-item:not(.is-active) > span:last-child, .step-item .step-sub { display: none; }
+  .rail-link { width: 34px; }
+  /* The tenant on the first line, the mode and version tags under it. */
+  .topbar { flex-wrap: wrap; height: auto; min-height: var(--topbar-h); gap: 8px; padding: 10px 16px; }
+  .topbar .route { flex: 1 1 100%; }
+  .topbar .ctx-chip { max-width: 100%; }
+  .topbar-spacer { display: none; }
+}

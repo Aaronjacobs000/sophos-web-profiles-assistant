@@ -30,6 +30,28 @@ export function plural(n, one, many = `${one}s`) {
   return `${n} ${n === 1 ? one : many}`;
 }
 
+/** The Build page's headline for the latest plan or build, in plain words rather than its status value. */
+export function buildHeadline(rec, readOnly) {
+  if (!rec) return "Plan the pilot";
+  switch (rec.status) {
+    case "dry-run":
+      if (!rec.checks.every((c) => c.ok)) return "Dry run found problems";
+      return readOnly ? "Dry run passed. Read-only mode, so nothing will be created." : `Dry run passed. Ready to create ${rec.steps.length} objects.`;
+    case "built":
+      return `Built ${rec.steps.length} objects`;
+    case "partial":
+      return "Build didn't finish";
+    case "failed":
+      return "Build failed";
+    case "rolled-back":
+      return "Rolled back";
+    case "rollback-partial":
+      return "Rollback didn't finish";
+    default:
+      return "Build";
+  }
+}
+
 /** The note on a pilot whose rollback didn't finish: what it left in the tenant, why, and what to do next. */
 export function rollbackUnfinishedBanner(pilot, tenantId) {
   const r = pilot?.rollbackUnfinished;

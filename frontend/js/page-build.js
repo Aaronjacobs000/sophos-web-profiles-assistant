@@ -4,7 +4,7 @@
 
 import { api } from "./api.js";
 import { currentTenantId, getStatus, initShell, setTenant } from "./shell.js";
-import { esc, escAttr } from "./ui.js";
+import { buildHeadline, esc, escAttr } from "./ui.js";
 import { icon } from "./icons.js";
 import { toast } from "./toast.js";
 import { diffHtml } from "./diff-view.js";
@@ -59,7 +59,7 @@ function render() {
   main.innerHTML = `
     <section class="page-head">
       <div><span class="eyebrow">Build${lead ? `: ${esc(lead.pilot.name)}` : ""}</span>
-        <h1>${lead ? (lead.status === "dry-run" ? (lead.checks.every((c) => c.ok) ? (getStatus()?.readOnly ? "Dry run passed. Read-only mode, so nothing will be created." : `Dry run passed. Ready to create ${lead.steps.length} objects.`) : "Dry run found problems") : lead.status === "built" ? `Built ${lead.steps.length} objects` : lead.status === "rolled-back" ? "Rolled back" : `Build ${esc(lead.status)}`) : "Plan the pilot"}</h1>
+        <h1>${esc(buildHeadline(lead, getStatus()?.readOnly))}</h1>
         <p class="page-lead">Site lists, then the profile, then a pilot policy at the top of the policy order with the profile, logging on and Recommended file types. A rollback snapshot is saved first. Every write is sent once, read back, and recorded in the audit log.</p></div>
       <div class="head-actions">
         <button class="btn btn-lg" id="dry">${icon("search")}Dry run</button>

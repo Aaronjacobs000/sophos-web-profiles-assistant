@@ -16,7 +16,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import type { TenantContext } from "../sophos/tenant-context.js";
-import { ReadOnlyApi, type TenantApi } from "../sophos/api/requester.js";
+import { ReadOnlyApi, errorStatus, type TenantApi } from "../sophos/api/requester.js";
 import { getPolicy, patchPolicy, type Policy } from "../sophos/api/policies.js";
 import { listAllEndpoints } from "../sophos/api/endpoints.js";
 import { appliesToFor } from "../domain/design.js";
@@ -88,6 +88,7 @@ function same(a: Assignment, b: Assignment): boolean {
 
 export interface PromotionView {
   pilot: PilotInfo | null;
+  /** Null with a pilot when the pilot policy is no longer in the tenant. */
   policy: { id: string; name: string; enabled: boolean; priority?: number; type: string; endpoints: number; endpointGroups: number; users: number; userGroups: number } | null;
   mode: "devices" | "users" | "none";
   plan: WavePlan | null;
@@ -113,7 +114,26 @@ export async function promotionView(dataDir: string, ctx: TenantContext, waveSiz
     const waveSize = waveSizeIn ?? suggestedWaveSize(planWaves(devices, [], 1, "computer").waves.length);
     return { pilot, policy: null, mode: "none", plan: planWaves(devices, [], waveSize, "computer"), waves, waveSize, problem: "There's no pilot yet, so these waves are a plan only. Build one in the Build step to move devices." };
   }
-  const [policy, devices] = await Promise.all([getPolicy(ro, t, pilot.policyId), listAllEndpoints(ro, t)]);
+  const [policy, devices] = await Promise.all([
+    // A pilot policy deleted in Sophos Fusion, or by a rollback Sophos answered with an error, answers 404.
+    getPolicy(ro, t, pilot.policyId).catch((err) => {
+      if (errorStatus(err) === 404) return null;
+      throw err;
+    }),
+    listAllEndpoints(ro, t),
+  ]);
+  if (!policy) {
+    const waveSize = waveSizeIn ?? suggestedWaveSize(planWaves(devices, [], 1, "computer").waves.length);
+    return {
+      pilot,
+      policy: null,
+      mode: "none",
+      plan: planWaves(devices, [], waveSize, "computer"),
+      waves,
+      waveSize,
+      problem: `The pilot policy "${pilot.policyName}" is no longer in the tenant, so there's nothing to promote. Roll the build back on the Build page to remove what's left of it, or build a new pilot.`,
+    };
+  }
   const a = policy.appliesTo ?? {};
   const users = (a.users?.length ?? 0) + (a.userGroups?.length ?? 0);
   const kind = policy.type === "server-web-control" ? "server" : "computer";

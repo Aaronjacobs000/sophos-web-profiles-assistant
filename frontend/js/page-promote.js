@@ -26,6 +26,13 @@ const RETIRE_STATUS = { retired: "tag-ok", restored: "tag-muted", partial: "tag-
 
 function pilotCard() {
   const p = promo.policy;
+  if (!p && promo.pilot) {
+    // The pilot policy is no longer in the tenant: say so, and what to do next.
+    return `<section class="panel-card"><div class="card-head"><h2>Pilot policy</h2><span class="spacer"></span><span class="tag tag-bad">Not found</span></div>
+      <ul class="order-list"><li><span class="o-name">${esc(promo.pilot.policyName)}<span class="o-kind">Web Control</span></span><span class="o-meta">not in the tenant</span></li></ul>
+      <p style="margin-top:10px">${esc(promo.problem ?? "")}</p>
+      <div class="head-actions"><a class="btn btn-small" href="/build.html?tenant=${encodeURIComponent(tenantId)}">Open the Build page</a></div></section>`;
+  }
   if (!p) return `<section class="panel-card"><h2>Pilot policy</h2><p class="muted">${esc(promo.problem ?? "No pilot.")}</p></section>`;
   return `<section class="panel-card"><div class="card-head"><h2>Pilot policy</h2><span class="spacer"></span>${p.enabled ? '<span class="tag tag-ok">On</span>' : '<span class="tag tag-warn">Off</span>'}</div>
     <ul class="order-list">
