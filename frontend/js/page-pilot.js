@@ -84,13 +84,15 @@ function tiles() {
   </div>`;
 }
 
-// Why Allow is off when the pilot policy is gone (a 404).
+// Why Allow is off when the pilot policy is gone (a 404), and when there's no pilot at all.
 const ALLOW_OFF = "Allow is off: the pilot policy is no longer in the tenant.";
+const ALLOW_NO_PILOT = "Allow is off: there's no pilot yet.";
 
 function digestHtml() {
   const d = digest;
   const gone = !view.policy && !!view.problem;
-  const allowAttrs = !view.pilot ? " disabled" : gone ? ` disabled title="${escAttr(ALLOW_OFF)}"` : "";
+  const off = !view.pilot ? ALLOW_NO_PILOT : gone ? ALLOW_OFF : "";
+  const allowAttrs = off ? ` disabled title="${escAttr(off)}"` : "";
   const max = Math.max(1, ...d.byDay.map((x) => x.warned + x.blocked + x.other));
   const daysRows = d.byDay
     .map((x) => `<tr><td class="cell-nowrap">${esc(x.day)}</td><td class="num">${n(x.warned)}</td><td class="num">${n(x.blocked)}</td><td class="num">${n(x.other)}</td><td class="day-bar-cell"><span class="day-bar"><span class="b-warn" style="width:${(x.warned / max) * 100}%"></span><span class="b-block" style="width:${(x.blocked / max) * 100}%"></span></span></td></tr>`)
@@ -104,11 +106,11 @@ function digestHtml() {
     ${tiles()}
     ${d.imported ? `<div class="banner banner-warn">${n(d.imported)} of these events were imported from a file, not collected from this tenant.</div>` : ""}
     <section class="panel-card"><div class="card-head"><h2>Sites the pilot warned or blocked</h2><span class="spacer"></span><span class="hint">${d.from ? `${when(d.from)} to ${when(d.to)}` : ""}</span></div>
-      ${hosts && gone ? `<p class="hint" data-allow-off>${esc(ALLOW_OFF)}</p>` : ""}
+      ${hosts && off ? `<p class="hint" data-allow-off>${esc(off)}</p>` : ""}
       ${hosts ? `<div class="table-wrap"><table class="data-table cu-table"><thead><tr><th>Site and reason</th><th class="num">Warned</th><th class="num">Blocked</th><th class="num">Users</th><th class="num">Devices</th><th>Last seen</th><th></th></tr></thead><tbody>${hosts}</tbody></table></div>
         <p class="hint">Allow adds the exact host to the pilot's Allow list, never its parent domain. A file type warning (such as an installer download) isn't a category decision; allowing the host lets every file type from it through.</p>` : '<p class="muted">No warned or blocked hits in this period.</p>'}
     </section>
-    <div class="kpi-pair">
+    <div class="kpi-pair pilot-pair">
       <section class="panel-card"><h2>By day</h2>${daysRows ? `<table class="mini-table"><thead><tr><th>Day</th><th>Warned</th><th>Blocked</th><th>Other</th><th></th></tr></thead><tbody>${daysRows}</tbody></table>` : '<p class="muted">Nothing yet.</p>'}</section>
       <section class="panel-card"><h2>Top reasons</h2>${reasons ? `<ul class="order-list">${reasons}</ul>` : '<p class="muted">Nothing yet.</p>'}</section>
     </div>`;

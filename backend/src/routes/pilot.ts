@@ -149,7 +149,8 @@ pilotRouter.get("/promote/:tenantId", async (req, res) => {
   const asked = Number(req.query.waveSize);
   const size = Number.isFinite(asked) && asked >= 1 ? Math.min(500, Math.floor(asked)) : null;
   try {
-    res.json(await promotionView(getState().dataDir, ctx, size));
+    const view = await promotionView(getState().dataDir, ctx, size);
+    res.json(view.policyUnread ? { ...view, policyUnread: maskSecrets(view.policyUnread) } : view);
   } catch (err) {
     fail(res, err, 500);
   }

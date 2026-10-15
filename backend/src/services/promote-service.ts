@@ -96,6 +96,8 @@ export interface PromotionView {
   /** The wave size used: the one asked for, or about ten waves' worth. */
   waveSize: number;
   problem?: string;
+  /** Why the pilot policy wasn't read, when Sophos answered anything but a 404 (that doesn't show it's gone). There's no plan then. */
+  policyUnread?: string;
 }
 
 /** About ten waves: 25 devices a wave for a small estate, more for a large one, in steps of 25. */
@@ -114,14 +116,19 @@ export async function promotionView(dataDir: string, ctx: TenantContext, waveSiz
     const waveSize = waveSizeIn ?? suggestedWaveSize(planWaves(devices, [], 1, "computer").waves.length);
     return { pilot, policy: null, mode: "none", plan: planWaves(devices, [], waveSize, "computer"), waves, waveSize, problem: "There's no pilot yet, so these waves are a plan only. Build one in the Build step to move devices." };
   }
+  let unread: string | undefined;
   const [policy, devices] = await Promise.all([
     // A pilot policy deleted in Sophos Fusion, or by a rollback Sophos answered with an error, answers 404.
     getPolicy(ro, t, pilot.policyId).catch((err) => {
-      if (errorStatus(err) === 404) return null;
-      throw err;
+      if (errorStatus(err) !== 404) unread = err instanceof Error ? err.message : String(err);
+      return null;
     }),
     listAllEndpoints(ro, t),
   ]);
+  if (unread) {
+    // Not read (a 403, a 5xx, no answer in time): it may still be there, so no plan from an assignment that wasn't read.
+    return { pilot, policy: null, mode: "none", plan: null, waves, waveSize: waveSizeIn ?? 25, policyUnread: unread };
+  }
   if (!policy) {
     const waveSize = waveSizeIn ?? suggestedWaveSize(planWaves(devices, [], 1, "computer").waves.length);
     return {

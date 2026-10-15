@@ -203,6 +203,11 @@ export async function planAllow(dataDir: string, ctx: TenantContext, host: strin
   const pilot = await activePilot(dataDir, t);
   if (!pilot) throw new Error("There's no pilot to add to. Build one in the Build step first.");
   const ro = new ReadOnlyApi(ctx.client);
+  // A pilot policy that answers 404 is gone, so there's nothing to allow for: refuse the dry run and the write. Any other failed read doesn't show it's gone.
+  const policy = await getPolicy(ro, t, pilot.policyId).catch((err) => {
+    if (errorStatus(err) === 404) throw new Error(`Allow is off: the pilot policy "${pilot.policyName}" is no longer in the tenant. Roll the build back on the Build page, or build a new pilot.`);
+    return null;
+  });
   const site = narrowAllow(host);
   const plan: AllowPlan = { pilot, host, site, steps: [], problems: [], notes: [] };
   if (!site) {
@@ -236,7 +241,6 @@ export async function planAllow(dataDir: string, ctx: TenantContext, host: strin
   }
   if (plan.problems.length) return plan;
   // The Allow writes no assignment, but a server on the computer pilot means the pilot isn't what it seems.
-  const policy = await getPolicy(ro, t, pilot.policyId).catch(() => null);
   if (policy?.type === "web-control" && policy.appliesTo?.endpoints?.length) {
     const servers = (await listAllEndpoints(ro, t)).filter((d) => policy.appliesTo!.endpoints!.includes(d.id) && deviceEligibility(d).kind === "server");
     if (servers.length) plan.notes.push(`The pilot is assigned to ${servers.length === 1 ? "a server" : "servers"} (${servers.map((d) => deviceEligibility(d).hostname).join(", ")}), which a Web Control policy doesn't apply to. Remove ${servers.length === 1 ? "it" : "them"} in Sophos Fusion; the tool won't add servers.`);

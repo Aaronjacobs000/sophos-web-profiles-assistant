@@ -239,6 +239,25 @@ a.ctx-chip:hover { border-color: var(--line-2); background: var(--glass-2); text
 .wave-list .w-name { font-weight: 650; color: var(--ink-0); }
 .wave-list .w-devs { font-size: 12.5px; color: var(--ink-2); overflow-wrap: anywhere; }
 .tag-cell { display: flex; flex-wrap: wrap; gap: 4px; }
+/* The Pilot page's By day and Top reasons cards stack at phone width, so the page never scrolls sideways. */
+@media (max-width: 760px) { .pilot-pair { grid-template-columns: 1fr; } }
+/* Retired records: the card sizes the table. On a narrow card each record stacks, so the status and the buttons are never cut off. */
+.retired-card { container-type: inline-size; }
+.retired-table .r-steps { min-width: 120px; overflow-wrap: anywhere; }
+.retired-table .r-actions { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
+@container (max-width: 680px) {
+  .retired-table thead { display: none; }
+  .retired-table, .retired-table tbody, .retired-table td { display: block; }
+  .retired-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "when status" "tags status" "steps steps" "act act"; gap: 2px 12px; padding: 12px 0; border-top: 1px solid var(--line); }
+  .retired-table tbody tr:first-child { border-top: 0; padding-top: 0; }
+  .retired-table td { padding: 0; border-top: 0; }
+  .retired-table .r-when { grid-area: when; font-weight: 600; }
+  .retired-table .r-tags { grid-area: tags; font-size: 12.5px; color: var(--ink-3); overflow-wrap: anywhere; }
+  .retired-table .r-status { grid-area: status; align-self: start; }
+  .retired-table .r-steps { grid-area: steps; min-width: 0; margin-top: 6px; font-size: 12.5px; color: var(--ink-2); }
+  .retired-table .r-act { grid-area: act; margin-top: 8px; }
+  .retired-table .r-actions { flex-direction: row; flex-wrap: wrap; }
+}
 
 /* ---------- narrow rail (761 to 1100 px): step numbers only, like the icon-only links ---------- */
 @media (width > 760px) and (width <= 1100px) {

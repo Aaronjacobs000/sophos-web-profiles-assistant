@@ -4,7 +4,7 @@
 
 import { api } from "./api.js";
 import { currentTenantId, getStatus, initShell, setTenant } from "./shell.js";
-import { esc, escAttr, plural, retireStatus, retireStepStatus, rollbackUnfinishedBanner } from "./ui.js";
+import { esc, escAttr, plural, retireStatus, retireStepStatus, rollbackUnfinishedBanner, sentence } from "./ui.js";
 import { icon } from "./icons.js";
 import { toast } from "./toast.js";
 import { diffHtml } from "./diff-view.js";
@@ -26,6 +26,15 @@ const RETIRE_STATUS = { retired: "tag-ok", restored: "tag-muted", partial: "tag-
 
 function pilotCard() {
   const p = promo.policy;
+  if (!p && promo.pilot && promo.policyUnread) {
+    // Any other failed read than a 404 (a 403, a 5xx, no answer in time) doesn't show the policy is gone: say it wasn't read, and offer a retry.
+    return `<section class="panel-card"><div class="card-head"><h2>Pilot policy</h2><span class="spacer"></span><span class="tag tag-warn">Not read</span></div>
+      <ul class="order-list"><li><span class="o-name">${esc(promo.pilot.policyName)}<span class="o-kind">Policy</span></span><span class="o-meta">not read</span></li></ul>
+      <p style="margin:10px 0">The tool couldn't read the pilot policy, so it can't plan waves. That doesn't mean it's gone. Retry, or check it in Sophos Fusion.</p>
+      <p class="hint" style="margin:0 0 10px;overflow-wrap:anywhere" data-unread-detail>Detail: ${esc(sentence(promo.policyUnread))}</p>
+      ${rollbackUnfinishedBanner(promo.pilot, tenantId)}
+      <div class="head-actions"><button class="btn btn-small" data-retry>Retry</button></div></section>`;
+  }
   if (!p && promo.pilot) {
     // The pilot policy is no longer in the tenant: say so, and what to do next.
     return `<section class="panel-card"><div class="card-head"><h2>Pilot policy</h2><span class="spacer"></span><span class="tag tag-bad">Not found</span></div>
@@ -67,7 +76,9 @@ function historyCard() {
 }
 
 function classicCard() {
-  const all = promo.plan?.notEligible ?? [];
+  // No plan while the pilot policy wasn't read.
+  if (!promo.plan) return "";
+  const all = promo.plan.notEligible ?? [];
   // A large estate can have thousands: count them by reason, then list the first few.
   const counts = Object.entries(all.reduce((m, d) => ((m[d.reason] = (m[d.reason] ?? 0) + 1), m), {})).sort((a, b) => b[1] - a[1]);
   const rows = all.slice(0, 25).map((d) => `<li><span class="o-name">${esc(d.hostname)}</span><span class="o-meta">${esc(REASON[d.reason] ?? d.reason)}</span></li>`).join("");
@@ -98,13 +109,15 @@ function retireCard() {
 
 function recordsCard() {
   const rows = retire.records
-    .map((r) => `<tr><td class="cell-nowrap">${when(r.at)}</td><td class="cell-nowrap">${esc(r.tags.join(", "))}</td><td><span class="tag ${RETIRE_STATUS[r.status] ?? "tag-muted"}">${esc(retireStatus(r.status))}</span></td><td class="cu-why">${esc(r.steps.map((s) => `${s.op === "policy-tags" ? s.policyName : s.url}: ${retireStepStatus(s.status)}${s.readBack ? ` (${s.readBack})` : ""}`).join("; "))}</td>
-      <td class="cell-nowrap">${["retired", "partial", "restore-partial", "failed"].includes(r.status) ? `<button class="btn btn-small" data-restore="${escAttr(r.id)}">Restore</button>` : ""} <button class="btn btn-small" data-diff="${escAttr(r.snapshotFile)}">Compare with snapshot</button></td></tr>`)
+    .map((r) => `<tr><td class="r-when">${when(r.at)}</td><td class="r-tags">${esc(r.tags.join(", "))}</td><td class="r-status"><span class="tag ${RETIRE_STATUS[r.status] ?? "tag-muted"}">${esc(retireStatus(r.status))}</span></td><td class="r-steps">${esc(r.steps.map((s) => `${s.op === "policy-tags" ? s.policyName : s.url}: ${retireStepStatus(s.status)}${s.readBack ? ` (${s.readBack})` : ""}`).join("; "))}</td>
+      <td class="r-act"><div class="r-actions">${["retired", "partial", "restore-partial", "failed"].includes(r.status) ? `<button class="btn btn-small" data-restore="${escAttr(r.id)}">Restore</button>` : ""}<button class="btn btn-small" data-diff="${escAttr(r.snapshotFile)}">Compare with snapshot</button></div></td></tr>`)
     .join("");
-  return `<section class="panel-card"><h2>Retired</h2>${rows ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>When</th><th>Tags</th><th>Status</th><th>Steps</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="muted">Nothing retired yet.</p>'}</section>`;
+  // The card sizes the table: on a narrow card each record stacks, so the status and the buttons are never cut off.
+  return `<section class="panel-card retired-card"><h2>Retired</h2>${rows ? `<div class="table-wrap"><table class="data-table retired-table"><thead><tr><th>When</th><th>Tags</th><th>Status</th><th>Steps</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="muted">Nothing retired yet.</p>'}</section>`;
 }
 
 function headline() {
+  if (promo.policyUnread) return "Couldn't read the pilot policy";
   const plan = promo.plan;
   if (!plan) return "Promote and retire";
   const left = plan.waves.reduce((a, w) => a + w.devices.length, 0);
@@ -132,8 +145,33 @@ async function refresh() {
   render();
 }
 
+/** Reads the page. When a read fails, the page says so in plain words and offers a retry; Sophos's answer stays out of the main text. */
+async function load() {
+  try {
+    await refresh();
+  } catch (err) {
+    main.innerHTML = `
+      <section class="page-head"><div><span class="eyebrow">Promote and retire</span><h1>Couldn't read the tenant</h1></div></section>
+      <section class="panel-card"><p style="margin:0 0 10px">The tool couldn't read the pilot, the devices or Website Management from Sophos Fusion, so there's nothing to show yet. Retry, or check the tenant in Sophos Fusion.</p>
+        <p class="hint" style="margin:0 0 10px;overflow-wrap:anywhere" data-unread-detail>Detail: ${esc(sentence(err.message))}</p>
+        <div class="head-actions"><button class="btn btn-small" data-retry>Retry</button></div></section>`;
+    wireRetry();
+  }
+}
+
+function wireRetry() {
+  main.querySelectorAll("[data-retry]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      b.disabled = true;
+      b.innerHTML = '<span class="spinner"></span>Reading';
+      await load();
+    }),
+  );
+}
+
 function wire() {
   const t = encodeURIComponent(tenantId);
+  wireRetry();
   main.querySelector("#wavesize")?.addEventListener("change", async (e) => {
     waveSize = Math.max(1, Number(e.target.value) || 25);
     await refresh();
@@ -249,11 +287,7 @@ async function start() {
   const r = await api.get(`/api/readiness/${encodeURIComponent(tenantId)}`).catch(() => null);
   if (r?.tenant) setTenant(r.tenant);
   main.innerHTML = '<p class="running-line"><span class="spinner"></span>Reading the pilot, devices and Website Management</p>';
-  try {
-    await refresh();
-  } catch (err) {
-    main.innerHTML = `<div class="banner banner-err">${esc(err.message)}</div>`;
-  }
+  await load();
 }
 
 start();

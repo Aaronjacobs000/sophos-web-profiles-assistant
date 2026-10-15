@@ -170,10 +170,12 @@ test("the Promote page says the pilot policy is gone instead of failing on the 4
   assert.equal(stale.policy, null);
   assert.match(stale.problem, /no longer in the tenant/);
 
-  // Any other answer is still an error.
+  // Any other answer isn't called gone: since v0.3.12 the view says it wasn't read.
   const c = await setup();
   c.tenant.policyGetStatus = 403;
-  await assert.rejects(withTenant(c.tenant, () => promotionView(c.dataDir, c.ctx, 25)), /Sophos API error 403/);
+  const unread = await withTenant(c.tenant, () => promotionView(c.dataDir, c.ctx, 25));
+  assert.equal(unread.policyUnread, "Sophos API error 403: Forbidden");
+  assert.equal(unread.problem, undefined);
 });
 
 test("the Build page headline says each status in plain words", () => {
