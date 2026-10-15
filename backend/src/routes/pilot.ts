@@ -10,7 +10,7 @@ import { jsonOnly } from "../middleware/json-body.js";
 import { maskSecrets } from "../log.js";
 import { summarize, WEB_CONTROL_EVENT } from "../domain/digest.js";
 import { collect, importEvents, readEvents, setEnabled, storeSummary } from "../services/siem-store.js";
-import { activePilot, addAllow, loadPilotRecord, planAllow, undoAllow } from "../services/pilot-service.js";
+import { activePilot, addAllow, loadPilotRecord, planAllow, readPilotPolicy, undoAllow } from "../services/pilot-service.js";
 import { moveWave, promotionView, setPilotEnabled, undoWave } from "../services/promote-service.js";
 import { previewRetire, restoreRetire, retire, retireOverview } from "../services/retire-service.js";
 import { ReadOnlyApi } from "../sophos/api/requester.js";
@@ -43,15 +43,12 @@ pilotRouter.get("/pilot/:tenantId", async (req, res) => {
   const dataDir = getState().dataDir;
   try {
     const pilot = await activePilot(dataDir, ctx.tenantId);
-    let policy = null;
-    if (pilot) {
-      const p = await getPolicy(new ReadOnlyApi(ctx.client), ctx.tenantId, pilot.policyId).catch(() => null);
-      policy = p ? { id: p.id, name: p.name, enabled: p.enabled ?? true, priority: p.priority, endpoints: p.appliesTo?.endpoints ?? [], endpointGroups: p.appliesTo?.endpointGroups ?? [], users: p.appliesTo?.users ?? [], userGroups: p.appliesTo?.userGroups ?? [] } : null;
-    }
+    // A pilot policy that answers 404 comes with a problem that says it's gone and what to do.
+    const { policy, problem } = pilot ? await readPilotPolicy(ctx, pilot) : { policy: null, problem: undefined };
     // An Allow whose build was rolled back went with it.
     const allows = (await loadPilotRecord(dataDir, ctx.tenantId)).allows;
     const builds = new Map((await listBuilds(dataDir, ctx.tenantId)).map((b) => [b.id, b.status]));
-    res.json({ pilot, policy, store: await storeSummary(dataDir, ctx.tenantId), allows: allows.map((a) => ({ ...a, buildStatus: builds.get(a.buildId) ?? "unknown" })) });
+    res.json({ pilot, policy, ...(problem ? { problem } : {}), store: await storeSummary(dataDir, ctx.tenantId), allows: allows.map((a) => ({ ...a, buildStatus: builds.get(a.buildId) ?? "unknown" })) });
   } catch (err) {
     fail(res, err, 500);
   }

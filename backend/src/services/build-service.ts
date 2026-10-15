@@ -12,8 +12,10 @@
  *   rollback  deletes what the build created in reverse order (policy, then
  *             profiles, then site lists; the API refuses to delete a profile
  *             or list still in use), verifies each 404, and puts Website
- *             Management back from the snapshot. A delete Sophos answers
- *             with a 5xx is read back too, since it can still go through.
+ *             Management back from the snapshot. A delete with no clear
+ *             answer (a 5xx, no answer in time, or a dropped connection)
+ *             is read back too, since it can still go through, and audited
+ *             with what the read-back found.
  *
  * Deletes go only to ids this tool recorded, never by name: other tools can
  * share a tenant.
@@ -543,17 +545,26 @@ export async function rollback(
     "site-list": (id) => deleteSiteList(api, t, id),
   };
   for (const s of toDelete) {
-    // Set when Sophos answered the delete with a 5xx, which can come back for a delete that went through.
-    let answered5xx: { status: number; reason: string } | undefined;
+    const entry = { tenantId: t, action: "delete", resource: s.kind, resourceId: s.id, detail: { name: s.name, rollbackOf: record.id } };
+    // Set when the delete got no clear answer (a 5xx, no answer in time, or a dropped connection), which can come back for a delete that went through.
+    let unclear: { said: string; reason: string } | undefined;
     try {
-      await auditedWrite({ tenantId: t }, "delete", s.kind, s.id!, () => deleter[s.kind](s.id!), { name: s.name, rollbackOf: record.id });
+      await deleter[s.kind](s.id!);
+      await auditOrWarn({ ...entry, ok: true });
     } catch (err) {
       const status = errorStatus(err);
-      if (status !== undefined && status >= 500) answered5xx = { status, reason: (isUnclearWrite(err) ? err.reason : err instanceof Error ? err.message : String(err)).replace(/\.$/, "") };
-      else if (status !== 404) {
-        s.status = "delete-failed";
-        out.push({ kind: s.kind, name: s.name, id: s.id, status: "failed", error: err instanceof Error ? err.message : String(err) });
-        continue;
+      const message = err instanceof Error ? err.message : String(err);
+      if (isUnclearWrite(err) || (status !== undefined && status >= 500)) {
+        // Audited below, with what the read-back found.
+        const reason = (isUnclearWrite(err) ? err.reason : message).replace(/\.$/, "");
+        unclear = { said: status !== undefined && status >= 500 ? `Sophos answered ${status}` : reason, reason };
+      } else {
+        await auditOrWarn({ ...entry, ok: false, error: message });
+        if (status !== 404) {
+          s.status = "delete-failed";
+          out.push({ kind: s.kind, name: s.name, id: s.id, status: "failed", error: message });
+          continue;
+        }
       }
     }
     // Confirm it's gone: GET by id answers 404 at once (retested 13/10/2026). A read that fails another way is a miss.
@@ -567,13 +578,17 @@ export async function rollback(
       }
     });
     s.status = gone.value ? "deleted" : "delete-failed";
-    if (answered5xx === undefined) {
+    if (unclear === undefined) {
       out.push({ kind: s.kind, name: s.name, id: s.id, status: gone.value ? "deleted, 404 on read-back" : "still there after delete" });
     } else if (gone.value) {
-      out.push({ kind: s.kind, name: s.name, id: s.id, status: `deleted: Sophos answered ${answered5xx.status}, then a read-back found it gone (404)` });
+      const note = `${unclear.said}, then a read-back found it gone (404)`;
+      await auditOrWarn({ ...entry, ok: true, detail: { ...entry.detail, note } });
+      out.push({ kind: s.kind, name: s.name, id: s.id, status: `deleted: ${note}` });
     } else {
       const read = gone.unread ? `A read-back couldn't read it (${gone.unread.replace(/\.$/, "")}), so it may still be there.` : "A read-back still found it, so it wasn't deleted.";
-      out.push({ kind: s.kind, name: s.name, id: s.id, status: "failed", error: `${answered5xx.reason}. ${read}` });
+      const error = `${unclear.reason}. ${read}`;
+      await auditOrWarn({ ...entry, ok: false, error });
+      out.push({ kind: s.kind, name: s.name, id: s.id, status: "failed", error });
     }
   }
   for (const step of restorePlan) {

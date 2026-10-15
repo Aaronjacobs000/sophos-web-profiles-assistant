@@ -94,6 +94,34 @@ export async function activePilot(dataDir: string, tenantId: string): Promise<Pi
   return null;
 }
 
+/** The pilot policy as the Pilot page shows it. */
+export interface PilotPolicyView {
+  id: string;
+  name: string;
+  enabled: boolean;
+  priority?: number;
+  endpoints: string[];
+  endpointGroups: string[];
+  users: string[];
+  userGroups: string[];
+}
+
+/**
+ * Reads the pilot policy for the Pilot page. When Sophos answers 404 it's
+ * gone (deleted in Sophos Fusion, or by a rollback Sophos answered unclearly),
+ * and problem says so and what to do. Any other failed read gives no policy
+ * and no problem, since it doesn't show the policy is gone.
+ */
+export async function readPilotPolicy(ctx: TenantContext, pilot: PilotInfo): Promise<{ policy: PilotPolicyView | null; problem?: string }> {
+  try {
+    const p = await getPolicy(new ReadOnlyApi(ctx.client), ctx.tenantId, pilot.policyId);
+    return { policy: { id: p.id, name: p.name, enabled: p.enabled ?? true, priority: p.priority, endpoints: p.appliesTo?.endpoints ?? [], endpointGroups: p.appliesTo?.endpointGroups ?? [], users: p.appliesTo?.users ?? [], userGroups: p.appliesTo?.userGroups ?? [] } };
+  } catch (err) {
+    if (errorStatus(err) !== 404) return { policy: null };
+    return { policy: null, problem: `The pilot policy "${pilot.policyName}" is no longer in the tenant. Roll the build back on the Build page to remove what's left of it, or build a new pilot.` };
+  }
+}
+
 export interface AllowEntry {
   id: string;
   at: string;

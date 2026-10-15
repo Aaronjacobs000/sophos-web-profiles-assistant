@@ -23,6 +23,13 @@ function pilotCard() {
   const p = view.pilot;
   const pol = view.policy;
   if (!p) return `<section class="panel-card"><h2>Pilot policy</h2><p class="muted">No pilot yet. <a href="/build.html?tenant=${encodeURIComponent(tenantId)}">Build one in the Build step</a>; the digest still works on any events collected.</p></section>`;
+  if (!pol && view.problem) {
+    // The pilot policy is no longer in the tenant: say so, and what to do next, instead of the note on an unfinished rollback.
+    return `<section class="panel-card"><div class="card-head"><h2>Pilot policy</h2><span class="spacer"></span><span class="tag tag-bad">Not found</span></div>
+      <ul class="order-list"><li><span class="o-name">${esc(p.policyName)}<span class="o-kind">Policy</span></span><span class="o-meta">not in the tenant</span></li></ul>
+      <p style="margin-top:10px">${esc(view.problem)}</p>
+      <div class="head-actions"><a class="btn btn-small" href="/build.html?tenant=${encodeURIComponent(tenantId)}">Open the Build page</a></div></section>`;
+  }
   const targets = pol ? pol.endpoints.length + pol.endpointGroups.length + pol.users.length + pol.userGroups.length : 0;
   return `<section class="panel-card"><div class="card-head"><h2>Pilot policy</h2><span class="spacer"></span>${pol ? (pol.enabled ? '<span class="tag tag-ok">On</span>' : '<span class="tag tag-warn">Off</span>') : '<span class="tag tag-bad">Not found</span>'}</div>
     <ul class="order-list">

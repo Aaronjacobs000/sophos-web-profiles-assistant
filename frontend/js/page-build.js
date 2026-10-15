@@ -87,7 +87,7 @@ function render() {
         <section class="panel-card"><h2>Builds</h2>${
           builds.length
             ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>When</th><th>Pilot</th><th>Status</th><th>Snapshot</th><th></th></tr></thead><tbody>${builds
-                .map((b) => `<tr><td class="cell-nowrap">${new Date(b.createdAt).toLocaleString("en-GB")}</td><td>${esc(b.pilot.name)}</td><td>${esc(b.status)}</td><td><code>${esc(b.snapshotFile ?? "")}</code></td><td class="cell-nowrap">
+                .map((b) => `<tr><td class="cell-nowrap">${new Date(b.createdAt).toLocaleString("en-GB")}</td><td>${esc(b.pilot.name)}</td><td>${esc(buildHeadline(b))}</td><td><code>${esc(b.snapshotFile ?? "")}</code></td><td class="cell-nowrap">
                   ${["built", "partial", "rollback-partial"].includes(b.status) ? `<button class="btn btn-small btn-danger" data-rollback="${escAttr(b.id)}">Roll back</button>` : ""}
                   ${b.snapshotFile ? `<button class="btn btn-small" data-diff="${escAttr(b.snapshotFile)}">Compare with snapshot</button>` : ""}</td></tr>`)
                 .join("")}</tbody></table></div>`
@@ -122,7 +122,7 @@ function render() {
       lastPlan = await api.post(`/api/build/${t}/execute`, pilotFromForm());
       builds = (await api.get(`/api/build/${t}`)).items;
       render();
-      toast(lastPlan.status === "built" ? "Built and read back." : `Build ${lastPlan.status}.`, lastPlan.status === "built" ? "ok" : "warn", 9000);
+      toast(lastPlan.status === "built" ? "Built and read back." : `${buildHeadline(lastPlan)}.`, lastPlan.status === "built" ? "ok" : "warn", 9000);
     } catch (err) {
       toast(err.message, "warn", 10000);
       render();
@@ -138,7 +138,7 @@ function render() {
         lastPlan = await api.post(`/api/build/${t}/${b.dataset.rollback}/rollback`, { dryRun: false });
         builds = (await api.get(`/api/build/${t}`)).items;
         render();
-        toast(`Rollback: ${lastPlan.status}.`, lastPlan.status === "rolled-back" ? "ok" : "warn", 9000);
+        toast(`${buildHeadline(lastPlan)}.`, lastPlan.status === "rolled-back" ? "ok" : "warn", 9000);
       } catch (err) {
         toast(err.message, "warn", 10000);
       }

@@ -39,7 +39,8 @@ function stepItem(step, active, tenantId) {
     return `<li><span class="step-item is-disabled" aria-disabled="true" title="Coming in drop ${step.drop}"><span class="step-num">${step.n}</span><span><span class="step-name">${esc(step.name)}<span class="tag tag-muted drop-tag">Drop ${step.drop}</span></span>${sub}</span></span></li>`;
   }
   const href = tenantId ? `${step.page}?tenant=${encodeURIComponent(tenantId)}` : step.page;
-  return `<li><a class="step-item${active ? " is-active" : ""}" href="${escAttr(href)}"${active ? ' aria-current="page"' : ""}><span class="step-num">${step.n}</span><span><span class="step-name">${esc(step.name)}</span>${sub}</span></a></li>`;
+  // The title names the step where the narrow rail shows only its number.
+  return `<li><a class="step-item${active ? " is-active" : ""}" href="${escAttr(href)}" title="${escAttr(step.name)}"${active ? ' aria-current="page"' : ""}><span class="step-num">${step.n}</span><span><span class="step-name">${esc(step.name)}</span>${sub}</span></a></li>`;
 }
 
 function railLink(href, label, ic, active) {
