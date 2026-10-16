@@ -119,17 +119,20 @@ function digestHtml() {
     </div>`;
 }
 
-/** In place of the digest when Pilot devices only is on and the pilot policy couldn't be read: say so, and offer a retry. */
+/** In place of the digest when Pilot devices only is on and the pilot policy couldn't be read: say so, and offer a retry. What Sophos answered goes on a separate detail line. */
 function filterUnreadHtml() {
   return `<section class="panel-card"><h2>Pilot devices only</h2>
-    <p style="margin-bottom:10px;overflow-wrap:anywhere">The tool couldn't read which devices are on the pilot (${esc(digest.pilotUnread)}), so the digest isn't shown. Retry, or untick Pilot devices only to see every device.</p>
+    <p style="margin:0 0 10px">The tool couldn't read which devices are on the pilot, so the digest isn't shown. Retry, or untick Pilot devices only to see every device.</p>
+    <p class="hint" style="margin:0 0 10px;overflow-wrap:anywhere" data-unread-detail>Detail: ${esc(sentence(digest.pilotUnread))}</p>
     <div class="head-actions"><button class="btn btn-small" data-retry>Retry</button></div></section>`;
 }
 
 function headline() {
   if (digest?.pilotUnread) return "Couldn't read the pilot's devices";
-  if (!digest || !digest.total) return days > 0 ? `No hits in the last ${days === 1 ? "day" : `${days} days`}` : "No hits stored";
-  return `${n(digest.byAction.warned)} warned and ${n(digest.byAction.blocked)} blocked ${days > 0 ? `in the last ${days === 1 ? "day" : `${days} days`}` : "in all stored events"}`;
+  // The period the digest on screen was read for, which a read that failed after a change of Period leaves as it was.
+  const shown = digest?.days ?? days;
+  if (!digest || !digest.total) return shown > 0 ? `No hits in the last ${shown === 1 ? "day" : `${shown} days`}` : "No hits stored";
+  return `${n(digest.byAction.warned)} warned and ${n(digest.byAction.blocked)} blocked ${shown > 0 ? `in the last ${shown === 1 ? "day" : `${shown} days`}` : "in all stored events"}`;
 }
 
 function render() {
@@ -187,6 +190,36 @@ function wireRetry() {
   );
 }
 
+/**
+ * Reads the page again after a change on it. When the read fails, the page
+ * keeps what it showed, says so above it in plain words and offers a retry;
+ * the error itself goes on a separate detail line.
+ */
+async function reread() {
+  try {
+    await refresh();
+  } catch (err) {
+    // The last read, drawn again so every button is as it was, with the choices just made.
+    render();
+    main.querySelector(".page-head").insertAdjacentHTML(
+      "afterend",
+      `<section class="panel-card" style="margin-bottom:18px" data-reread-failed><h2>Couldn't read the pilot</h2>
+        <p style="margin:0 0 10px">The tool couldn't read the pilot or its events, so the page still shows what it read before. Retry, or check the tenant in Sophos Fusion.</p>
+        <p class="hint" style="margin:0 0 10px;overflow-wrap:anywhere" data-unread-detail>Detail: ${esc(sentence(err.message))}</p>
+        <div class="head-actions"><button class="btn btn-small" data-reread>Retry</button></div></section>`,
+    );
+    // Into view from wherever the change was made, clear of the sticky top bar (taller when it wraps at phone width).
+    const note = main.querySelector("[data-reread-failed]");
+    note.style.scrollMarginTop = `${(document.querySelector(".topbar")?.getBoundingClientRect().height ?? 0) + 12}px`;
+    note.scrollIntoView({ block: "nearest" });
+    note.querySelector("[data-reread]").addEventListener("click", async (e) => {
+      e.currentTarget.disabled = true;
+      e.currentTarget.innerHTML = '<span class="spinner"></span>Reading';
+      await reread();
+    });
+  }
+}
+
 function allowModal(plan) {
   document.getElementById("results-modal")?.remove();
   const steps = plan.steps
@@ -216,11 +249,11 @@ function allowModal(plan) {
       const r = await api.post(`/api/pilot/${encodeURIComponent(tenantId)}/allow`, { host: plan.host, dryRun: false });
       close();
       toast(`Allowed ${r.entry.site}: ${r.entry.readBack}.`, "ok", 9000);
-      await refresh();
+      await reread();
     } catch (err) {
       toast(err.message, "warn", 10000);
       close();
-      await refresh();
+      await reread();
     }
   });
 }
@@ -237,7 +270,7 @@ function wire() {
     } catch (err) {
       toast(err.message, "warn", 9000);
     }
-    await refresh();
+    await reread();
   });
   main.querySelector("#import").addEventListener("change", async (e) => {
     const file = e.target.files?.[0];
@@ -249,7 +282,7 @@ function wire() {
     } catch (err) {
       toast(err.message, "warn", 9000);
     }
-    await refresh();
+    await reread();
   });
   main.querySelector("#schedule").addEventListener("change", async (e) => {
     await api.put(`/api/pilot/${t}/schedule`, { enabled: e.target.checked });
@@ -257,11 +290,11 @@ function wire() {
   });
   main.querySelector("#days").addEventListener("change", async (e) => {
     days = Number(e.target.value);
-    await refresh();
+    await reread();
   });
   main.querySelector("#pilotonly").addEventListener("change", async (e) => {
     pilotOnly = e.target.checked;
-    await refresh();
+    await reread();
   });
   wireRetry();
   main.querySelectorAll("[data-allow]").forEach((b) =>
@@ -285,7 +318,7 @@ function wire() {
       } catch (err) {
         toast(err.message, "warn", 9000);
       }
-      await refresh();
+      await reread();
     }),
   );
 }

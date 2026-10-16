@@ -67,18 +67,20 @@ function wavesCard() {
   </section>`;
 }
 
-// Why Undo is off on a wave while the pilot policy it changed wasn't read.
+// Why Undo is off on a wave while the pilot policy it changed wasn't read, or is no longer in the tenant.
 const UNDO_OFF = "Undo is off: the tool couldn't read the pilot policy.";
+const UNDO_GONE = "Undo is off: the pilot policy is no longer in the tenant.";
 
 function historyCard() {
-  // While the pilot policy isn't read, its assignment can't be checked, so Undo is off on its waves; the server refuses it too.
-  const off = (w) => !!promo.policyUnread && w.policyId === promo.pilot?.policyId;
+  // While the pilot policy isn't read, its assignment can't be checked, and once it's gone there's none to put back, so Undo is off on its waves; the server refuses it too.
+  const why = promo.policyUnread ? UNDO_OFF : !promo.policy && promo.pilot ? UNDO_GONE : "";
+  const off = (w) => !!why && w.policyId === promo.pilot?.policyId;
   const undoable = promo.waves.filter((w) => ["moved", "undo-failed"].includes(w.status));
   const rows = promo.waves
     .map((w) => `<li><div><div class="w-name">${when(w.at)}: ${n(w.devices.length)} ${w.devices.length === 1 ? "device" : "devices"}</div><div class="w-devs">${esc(w.devices.map((d) => d.hostname).join(", "))}${w.readBack ? `. Read back: ${esc(w.readBack)}` : ""}${w.error ? `. ${esc(w.error)}` : ""}</div></div>
-      <span>${WAVE_STATUS[w.status] ?? ""}${undoable.includes(w) ? ` <button class="btn btn-small" data-undo-wave="${escAttr(w.id)}"${off(w) ? ` disabled title="${escAttr(UNDO_OFF)}"` : ""}>Undo</button>` : ""}</span></li>`)
+      <span>${WAVE_STATUS[w.status] ?? ""}${undoable.includes(w) ? ` <button class="btn btn-small" data-undo-wave="${escAttr(w.id)}"${off(w) ? ` disabled title="${escAttr(why)}"` : ""}>Undo</button>` : ""}</span></li>`)
     .join("");
-  return `<section class="panel-card"><h2>Waves moved</h2>${undoable.some(off) ? `<p class="hint" data-undo-off>${esc(UNDO_OFF)}</p>` : ""}${rows ? `<ul class="wave-list">${rows}</ul>` : '<p class="muted">None yet.</p>'}</section>`;
+  return `<section class="panel-card"><h2>Waves moved</h2>${undoable.some(off) ? `<p class="hint" data-undo-off>${esc(why)}</p>` : ""}${rows ? `<ul class="wave-list">${rows}</ul>` : '<p class="muted">None yet.</p>'}</section>`;
 }
 
 function classicCard() {

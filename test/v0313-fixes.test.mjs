@@ -92,19 +92,13 @@ test("while the pilot policy can't be read, a wave undo is refused with a plain 
   }
 });
 
-test("the other undo paths stay as they were: a policy that reads is put back, and a 404 records the undo as failed", async () => {
+// A 404 is refused with its own plain message since v0.3.14 (test/v0314-fixes.test.mjs).
+test("the other undo path stays as it was: a policy that reads is put back", async () => {
   const a = await setup();
   const undone = await undoWave(a.dataDir, a.ctx, a.wave.id);
   assert.equal(undone.status, "undone", undone.error);
   assert.equal(undone.readBack, "assignment back as before the wave");
   assert.deepEqual(a.tenant.writes, [`PATCH /endpoint/v1/policies/${a.tenant.policyId}`]);
-
-  // Gone (a 404): recorded as an undo that failed, as before.
-  const b = await setup();
-  b.tenant.policies.clear();
-  const failed = await undoWave(b.dataDir, b.ctx, b.wave.id);
-  assert.deepEqual([failed.status, failed.error], ["undo-failed", "Sophos API error 404: NotFound"]);
-  assert.deepEqual(b.tenant.writes, []);
 });
 
 // Last in this file: it configures a mock tenant credential in this process's environment.

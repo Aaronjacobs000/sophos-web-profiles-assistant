@@ -95,7 +95,8 @@ test("the pilot devices filter says the pilot policy wasn't read, instead of cou
     await b.evaluate(`document.querySelector("#pilotonly").click(); true`);
     const on = await settle("Couldn't read");
     assert.equal(on.h1, "Couldn't read the pilot's devices");
-    assert.ok(on.text.includes(`The tool couldn't read which devices are on the pilot (${unread}), so the digest isn't shown. Retry, or untick Pilot devices only to see every device.`), on.text);
+    // Sophos's answer is on a separate detail line since v0.3.14.
+    assert.ok(on.text.includes(`The tool couldn't read which devices are on the pilot, so the digest isn't shown. Retry, or untick Pilot devices only to see every device. Detail: ${unread}.`), on.text);
     assert.ok(!/No hits|No warned or blocked hits|no longer in the tenant|Not found/.test(on.text), on.text);
     assert.equal(on.retry, 2, "a Retry on the pilot card and one in place of the digest");
     assert.deepEqual(on.box, { checked: true, disabled: false }, "a ticked box can still be unticked");

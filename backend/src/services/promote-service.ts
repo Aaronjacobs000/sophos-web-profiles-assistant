@@ -42,6 +42,9 @@ type Assignment = { endpoints: string[]; endpointGroups: string[] };
 /** Why a wave undo is refused while the pilot policy can't be read. */
 export const WAVE_UNDO_UNREAD = "Undo is off: the tool couldn't read the pilot policy, so it can't check the assignment first. Try again later, or check it in Sophos Fusion.";
 
+/** Why a wave undo is refused when the pilot policy is no longer in the tenant (a 404). */
+export const WAVE_UNDO_GONE = "Undo is off: the pilot policy is no longer in the tenant, so there's no assignment to put back.";
+
 export interface WaveRecord {
   id: string;
   at: string;
@@ -257,13 +260,11 @@ export async function undoWave(dataDir: string, ctx: TenantContext, waveId: stri
   if (!["moved", "undo-failed"].includes(wave.status)) throw new Error(`This wave is ${wave.status}; there's nothing to undo.`);
   const later = record.waves.find((w) => w.policyId === wave.policyId && w.status === "moved" && w.at > wave.at);
   if (later) throw new Error("Undo the later waves first.");
-  // Not read (a 403, a 5xx, no answer in time): the assignment can't be checked, so refuse and leave the wave as it was. A 404 is recorded as before.
+  // Gone (a 404): there's no assignment to put back. Not read (a 403, a 5xx, no answer in time): it can't be checked. Either way, refuse and leave the wave as it was.
   const read = await getPolicy(ro, t, wave.policyId).catch((err: unknown) => {
-    if (errorStatus(err) !== 404) throw new Error(WAVE_UNDO_UNREAD);
-    return err instanceof Error ? err : new Error(String(err));
+    throw new Error(errorStatus(err) === 404 ? WAVE_UNDO_GONE : WAVE_UNDO_UNREAD);
   });
   try {
-    if (read instanceof Error) throw read;
     const current = assignmentOf(read);
     if (!same(current, wave.after)) throw new Error("The pilot's assignment has changed since this wave, so it wasn't put back. Check it in Sophos Fusion.");
     const body = { appliesTo: appliesToFor({ endpoints: wave.before.endpoints, endpointGroups: wave.before.endpointGroups }) };
