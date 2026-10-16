@@ -58,7 +58,8 @@ test("the Pilot page says a pilot policy it couldn't read wasn't read, not that 
     await b.open(`${base}/pilot.html?tenant=${T}`, 1440, ".order-list");
     const card = await b.evaluate(PILOT_CARD);
     assert.equal(card.tag, "Not read");
-    assert.ok(card.text.includes(`The tool couldn't read the pilot policy (${unread}). That doesn't mean it's gone.`), card.text);
+    // Since v0.3.13 Sophos's answer is on its own Detail line.
+    assert.ok(card.text.includes(`The tool couldn't read the pilot policy. That doesn't mean it's gone. Retry, or check it in Sophos Fusion. Detail: ${unread}.`), card.text);
     assert.ok(!/Not found|no longer in the tenant|not in the tenant/.test(card.text), card.text);
     assert.deepEqual(card.buttons, ["Retry"]);
     // Retry reads it again; read this time, the card shows the policy.

@@ -67,12 +67,18 @@ function wavesCard() {
   </section>`;
 }
 
+// Why Undo is off on a wave while the pilot policy it changed wasn't read.
+const UNDO_OFF = "Undo is off: the tool couldn't read the pilot policy.";
+
 function historyCard() {
+  // While the pilot policy isn't read, its assignment can't be checked, so Undo is off on its waves; the server refuses it too.
+  const off = (w) => !!promo.policyUnread && w.policyId === promo.pilot?.policyId;
+  const undoable = promo.waves.filter((w) => ["moved", "undo-failed"].includes(w.status));
   const rows = promo.waves
     .map((w) => `<li><div><div class="w-name">${when(w.at)}: ${n(w.devices.length)} ${w.devices.length === 1 ? "device" : "devices"}</div><div class="w-devs">${esc(w.devices.map((d) => d.hostname).join(", "))}${w.readBack ? `. Read back: ${esc(w.readBack)}` : ""}${w.error ? `. ${esc(w.error)}` : ""}</div></div>
-      <span>${WAVE_STATUS[w.status] ?? ""}${["moved", "undo-failed"].includes(w.status) ? ` <button class="btn btn-small" data-undo-wave="${escAttr(w.id)}">Undo</button>` : ""}</span></li>`)
+      <span>${WAVE_STATUS[w.status] ?? ""}${undoable.includes(w) ? ` <button class="btn btn-small" data-undo-wave="${escAttr(w.id)}"${off(w) ? ` disabled title="${escAttr(UNDO_OFF)}"` : ""}>Undo</button>` : ""}</span></li>`)
     .join("");
-  return `<section class="panel-card"><h2>Waves moved</h2>${rows ? `<ul class="wave-list">${rows}</ul>` : '<p class="muted">None yet.</p>'}</section>`;
+  return `<section class="panel-card"><h2>Waves moved</h2>${undoable.some(off) ? `<p class="hint" data-undo-off>${esc(UNDO_OFF)}</p>` : ""}${rows ? `<ul class="wave-list">${rows}</ul>` : '<p class="muted">None yet.</p>'}</section>`;
 }
 
 function classicCard() {

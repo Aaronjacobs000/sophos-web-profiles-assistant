@@ -4,7 +4,7 @@
 
 import { api } from "./api.js";
 import { currentTenantId, getStatus, initShell, setTenant } from "./shell.js";
-import { esc, escAttr, relTime, rollbackUnfinishedBanner } from "./ui.js";
+import { esc, escAttr, relTime, rollbackUnfinishedBanner, sentence } from "./ui.js";
 import { icon } from "./icons.js";
 import { toast } from "./toast.js";
 
@@ -37,7 +37,8 @@ function pilotCard() {
         <li><span class="o-name">${esc(p.policyName)}<span class="o-kind">Policy</span></span><span class="o-meta">not read</span></li>
         <li><span class="o-name">${esc(p.profileName)}<span class="o-kind">Profile</span></span><span class="o-meta"><a href="/build.html?tenant=${encodeURIComponent(tenantId)}">Build</a></span></li>
       </ul>
-      <p style="margin:10px 0;overflow-wrap:anywhere">The tool couldn't read the pilot policy (${esc(view.policyUnread)}). That doesn't mean it's gone. Retry, or check it in Sophos Fusion.</p>
+      <p style="margin:10px 0">The tool couldn't read the pilot policy. That doesn't mean it's gone. Retry, or check it in Sophos Fusion.</p>
+      <p class="hint" style="margin:0 0 10px;overflow-wrap:anywhere" data-unread-detail>Detail: ${esc(sentence(view.policyUnread))}</p>
       ${rollbackUnfinishedBanner(p, tenantId)}
       <div class="head-actions"><button class="btn btn-small" data-retry>Retry</button></div></section>`;
   }
@@ -98,16 +99,18 @@ function digestHtml() {
     .map((x) => `<tr><td class="cell-nowrap">${esc(x.day)}</td><td class="num">${n(x.warned)}</td><td class="num">${n(x.blocked)}</td><td class="num">${n(x.other)}</td><td class="day-bar-cell"><span class="day-bar"><span class="b-warn" style="width:${(x.warned / max) * 100}%"></span><span class="b-block" style="width:${(x.blocked / max) * 100}%"></span></span></td></tr>`)
     .join("");
   const reasons = d.byReason.slice(0, 8).map((r) => `<li><span class="o-name">${esc(r.reason)}</span><span class="o-meta">${n(r.hits)}</span></li>`).join("");
+  // Each count carries its name, shown only when a narrow card stacks the row.
+  const count = (label, x, cls = "num") => `<td class="${cls} s-count"><span class="s-label">${label} </span>${x}</td>`;
   const hosts = d.hosts
     .slice(0, 100)
-    .map((h) => `<tr><td class="cu-site"><b>${esc(h.host)}</b><span class="t-sub">${esc(h.reasons.join("; "))}</span></td><td class="num">${n(h.byAction.warned)}</td><td class="num">${n(h.byAction.blocked)}</td><td class="num">${n(h.users)}</td><td class="num">${n(h.devices)}</td><td class="cell-nowrap">${when(h.lastSeen)}</td><td><button class="btn btn-small" data-allow="${escAttr(h.host)}"${allowAttrs}>Allow</button></td></tr>`)
+    .map((h) => `<tr><td class="cu-site s-site"><b>${esc(h.host)}</b><span class="t-sub">${esc(h.reasons.join("; "))}</span></td>${count("Warned", n(h.byAction.warned))}${count("Blocked", n(h.byAction.blocked))}${count("Users", n(h.users))}${count("Devices", n(h.devices))}${count("Last seen", when(h.lastSeen), "cell-nowrap")}<td class="s-act"><button class="btn btn-small" data-allow="${escAttr(h.host)}"${allowAttrs}>Allow</button></td></tr>`)
     .join("");
   return `
     ${tiles()}
     ${d.imported ? `<div class="banner banner-warn">${n(d.imported)} of these events were imported from a file, not collected from this tenant.</div>` : ""}
-    <section class="panel-card"><div class="card-head"><h2>Sites the pilot warned or blocked</h2><span class="spacer"></span><span class="hint">${d.from ? `${when(d.from)} to ${when(d.to)}` : ""}</span></div>
+    <section class="panel-card sites-card"><div class="card-head"><h2>Sites the pilot warned or blocked</h2><span class="spacer"></span><span class="hint">${d.from ? `${when(d.from)} to ${when(d.to)}` : ""}</span></div>
       ${hosts && off ? `<p class="hint" data-allow-off>${esc(off)}</p>` : ""}
-      ${hosts ? `<div class="table-wrap"><table class="data-table cu-table"><thead><tr><th>Site and reason</th><th class="num">Warned</th><th class="num">Blocked</th><th class="num">Users</th><th class="num">Devices</th><th>Last seen</th><th></th></tr></thead><tbody>${hosts}</tbody></table></div>
+      ${hosts ? `<div class="table-wrap"><table class="data-table cu-table sites-table"><thead><tr><th>Site and reason</th><th class="num">Warned</th><th class="num">Blocked</th><th class="num">Users</th><th class="num">Devices</th><th>Last seen</th><th></th></tr></thead><tbody>${hosts}</tbody></table></div>
         <p class="hint">Allow adds the exact host to the pilot's Allow list, never its parent domain. A file type warning (such as an installer download) isn't a category decision; allowing the host lets every file type from it through.</p>` : '<p class="muted">No warned or blocked hits in this period.</p>'}
     </section>
     <div class="kpi-pair pilot-pair">
@@ -158,6 +161,30 @@ async function refresh() {
   const t = encodeURIComponent(tenantId);
   [view, digest] = await Promise.all([api.get(`/api/pilot/${t}`), api.get(`/api/pilot/${t}/digest?days=${days}${pilotOnly ? "&pilotOnly=1" : ""}`)]);
   render();
+}
+
+/** Reads the page. When a read fails, the page says so in plain words and offers a retry; the error itself stays out of the main text. */
+async function load() {
+  try {
+    await refresh();
+  } catch (err) {
+    main.innerHTML = `
+      <section class="page-head"><div><span class="eyebrow">Pilot</span><h1>Couldn't read the pilot</h1></div></section>
+      <section class="panel-card"><p style="margin:0 0 10px">The tool couldn't read the pilot or its events, so there's nothing to show yet. Retry, or check the tenant in Sophos Fusion.</p>
+        <p class="hint" style="margin:0 0 10px;overflow-wrap:anywhere" data-unread-detail>Detail: ${esc(sentence(err.message))}</p>
+        <div class="head-actions"><button class="btn btn-small" data-retry>Retry</button></div></section>`;
+    wireRetry();
+  }
+}
+
+function wireRetry() {
+  main.querySelectorAll("[data-retry]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      b.disabled = true;
+      b.innerHTML = '<span class="spinner"></span>Reading';
+      await load();
+    }),
+  );
 }
 
 function allowModal(plan) {
@@ -236,18 +263,7 @@ function wire() {
     pilotOnly = e.target.checked;
     await refresh();
   });
-  main.querySelectorAll("[data-retry]").forEach((b) =>
-    b.addEventListener("click", async () => {
-      b.disabled = true;
-      b.innerHTML = '<span class="spinner"></span>Reading';
-      try {
-        await refresh();
-      } catch (err) {
-        toast(err.message, "warn", 9000);
-        render();
-      }
-    }),
-  );
+  wireRetry();
   main.querySelectorAll("[data-allow]").forEach((b) =>
     b.addEventListener("click", async () => {
       try {
@@ -283,11 +299,7 @@ async function start() {
   }
   const r = await api.get(`/api/readiness/${encodeURIComponent(tenantId)}`).catch(() => null);
   if (r?.tenant) setTenant(r.tenant);
-  try {
-    await refresh();
-  } catch (err) {
-    main.innerHTML = `<div class="banner banner-err">${esc(err.message)}</div>`;
-  }
+  await load();
 }
 
 start();

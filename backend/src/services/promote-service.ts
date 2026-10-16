@@ -39,6 +39,9 @@ const REASON_TEXT: Record<string, string> = {
 
 type Assignment = { endpoints: string[]; endpointGroups: string[] };
 
+/** Why a wave undo is refused while the pilot policy can't be read. */
+export const WAVE_UNDO_UNREAD = "Undo is off: the tool couldn't read the pilot policy, so it can't check the assignment first. Try again later, or check it in Sophos Fusion.";
+
 export interface WaveRecord {
   id: string;
   at: string;
@@ -254,8 +257,14 @@ export async function undoWave(dataDir: string, ctx: TenantContext, waveId: stri
   if (!["moved", "undo-failed"].includes(wave.status)) throw new Error(`This wave is ${wave.status}; there's nothing to undo.`);
   const later = record.waves.find((w) => w.policyId === wave.policyId && w.status === "moved" && w.at > wave.at);
   if (later) throw new Error("Undo the later waves first.");
+  // Not read (a 403, a 5xx, no answer in time): the assignment can't be checked, so refuse and leave the wave as it was. A 404 is recorded as before.
+  const read = await getPolicy(ro, t, wave.policyId).catch((err: unknown) => {
+    if (errorStatus(err) !== 404) throw new Error(WAVE_UNDO_UNREAD);
+    return err instanceof Error ? err : new Error(String(err));
+  });
   try {
-    const current = assignmentOf(await getPolicy(ro, t, wave.policyId));
+    if (read instanceof Error) throw read;
+    const current = assignmentOf(read);
     if (!same(current, wave.after)) throw new Error("The pilot's assignment has changed since this wave, so it wasn't put back. Check it in Sophos Fusion.");
     const body = { appliesTo: appliesToFor({ endpoints: wave.before.endpoints, endpointGroups: wave.before.endpointGroups }) };
     await auditedWrite({ tenantId: t }, "update", "policy", wave.policyId, () => patchPolicy(api, t, wave.policyId, body), { undoWave: wave.id, removed: wave.devices.map((d) => d.hostname) });
