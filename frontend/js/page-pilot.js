@@ -85,6 +85,9 @@ function tiles() {
   </div>`;
 }
 
+// A Collect now that failed, whether the request was refused or the collection itself failed; the toast's detail line says why.
+const COLLECT_FAILED = "Couldn't collect events.";
+
 // Why Allow is off when the pilot policy is gone (a 404), and when there's no pilot at all.
 const ALLOW_OFF = "Allow is off: the pilot policy is no longer in the tenant.";
 const ALLOW_NO_PILOT = "Allow is off: there's no pilot yet.";
@@ -176,16 +179,17 @@ async function load() {
       <section class="panel-card"><p style="margin:0 0 10px">The tool couldn't read the pilot or its events, so there's nothing to show yet. Retry, or check the tenant in Sophos Fusion.</p>
         <p class="hint" style="margin:0 0 10px;overflow-wrap:anywhere" data-unread-detail>Detail: ${esc(sentence(err.message))}</p>
         <div class="head-actions"><button class="btn btn-small" data-retry>Retry</button></div></section>`;
-    wireRetry();
+    wireRetry(load);
   }
 }
 
-function wireRetry() {
+/** Wires each Retry on the page to read it with read: load when nothing was read yet, reread once the page shows a read. */
+function wireRetry(read) {
   main.querySelectorAll("[data-retry]").forEach((b) =>
     b.addEventListener("click", async () => {
       b.disabled = true;
       b.innerHTML = '<span class="spinner"></span>Reading';
-      await load();
+      await read();
     }),
   );
 }
@@ -251,7 +255,7 @@ function allowModal(plan) {
       toast(`Allowed ${r.entry.site}: ${r.entry.readBack}.`, "ok", 9000);
       await reread();
     } catch (err) {
-      toast(err.message, "warn", 10000);
+      toast(`Couldn't allow ${plan.site ?? plan.host}.`, "warn", 10000, err.message);
       close();
       await reread();
     }
@@ -266,9 +270,10 @@ function wire() {
     b.innerHTML = '<span class="spinner"></span>Collecting';
     try {
       const r = await api.post(`/api/pilot/${t}/collect`, {});
-      toast(r.ok ? `Collected: ${n(r.added)} new of ${n(r.web)} web events (${n(r.fetched)} events read).` : `Collection failed: ${r.error}`, r.ok ? "ok" : "warn", 9000);
+      if (r.ok) toast(`Collected: ${n(r.added)} new of ${n(r.web)} web events (${n(r.fetched)} events read).`, "ok", 9000);
+      else toast(COLLECT_FAILED, "warn", 9000, r.error);
     } catch (err) {
-      toast(err.message, "warn", 9000);
+      toast(COLLECT_FAILED, "warn", 9000, err.message);
     }
     await reread();
   });
@@ -280,13 +285,22 @@ function wire() {
       const r = await api.post(`/api/pilot/${t}/import`, { label: file.name, data });
       toast(`Imported ${n(r.added)} new web events from ${file.name}.`, "ok", 8000);
     } catch (err) {
-      toast(err.message, "warn", 9000);
+      toast(`Couldn't import events from ${file.name}.`, "warn", 9000, err.message);
     }
     await reread();
   });
   main.querySelector("#schedule").addEventListener("change", async (e) => {
-    await api.put(`/api/pilot/${t}/schedule`, { enabled: e.target.checked });
-    toast(e.target.checked ? "Collection is on while the tool runs." : "Collection is off.", "ok", 5000);
+    const box = e.target;
+    const on = box.checked;
+    try {
+      const saved = await api.put(`/api/pilot/${t}/schedule`, { enabled: on });
+      view.store.state.enabled = saved?.enabled ?? on;
+      toast(on ? "Collection is on while the tool runs." : "Collection is off.", "ok", 5000);
+    } catch (err) {
+      // Not saved: the box shows the setting on file again.
+      box.checked = view.store.state.enabled;
+      toast(`Couldn't turn collection ${on ? "on" : "off"}, so it's still ${view.store.state.enabled ? "on" : "off"}.`, "warn", 9000, err.message);
+    }
   });
   main.querySelector("#days").addEventListener("change", async (e) => {
     days = Number(e.target.value);
@@ -296,14 +310,15 @@ function wire() {
     pilotOnly = e.target.checked;
     await reread();
   });
-  wireRetry();
+  // The Retry in the Not read and Pilot devices only cards keeps what's on screen while the read fails, like the note's Retry.
+  wireRetry(reread);
   main.querySelectorAll("[data-allow]").forEach((b) =>
     b.addEventListener("click", async () => {
       try {
         const r = await api.post(`/api/pilot/${t}/allow`, { host: b.dataset.allow, dryRun: true });
         allowModal(r.plan);
       } catch (err) {
-        toast(err.message, "warn", 9000);
+        toast(`Couldn't run the dry run for ${b.dataset.allow}.`, "warn", 9000, err.message);
       }
     }),
   );
@@ -314,9 +329,10 @@ function wire() {
       b.disabled = true;
       try {
         const r = await api.post(`/api/pilot/${t}/allow/${encodeURIComponent(b.dataset.undo)}/undo`, {});
-        toast(r.status === "undone" ? `Undone. ${(r.undo ?? []).join(" ")}` : `Undo failed: ${r.error}`, r.status === "undone" ? "ok" : "warn", 9000);
+        if (r.status === "undone") toast(`Undone. ${(r.undo ?? []).join(" ")}`, "ok", 9000);
+        else toast(`Couldn't undo the Allow for ${a?.site}.`, "warn", 9000, r.error);
       } catch (err) {
-        toast(err.message, "warn", 9000);
+        toast(`Couldn't undo the Allow for ${a?.site}.`, "warn", 9000, err.message);
       }
       await reread();
     }),

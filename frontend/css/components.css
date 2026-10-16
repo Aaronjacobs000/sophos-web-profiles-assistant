@@ -584,6 +584,8 @@ input:disabled { cursor: not-allowed; opacity: 0.5; }
 .toast-info { border-left-color: var(--accent); }
 .toast-warn { border-left-color: var(--warn); }
 .toast-fade { opacity: 0; }
+/* What Sophos or the tool answered, under a toast's plain message. */
+.toast-detail { margin-top: 4px; font-size: 12px; color: var(--ink-3); overflow-wrap: anywhere; }
 
 /* ================= modal ================= */
 .modal-overlay, .overlay {

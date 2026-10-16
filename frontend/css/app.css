@@ -300,4 +300,7 @@ a.ctx-chip:hover { border-color: var(--line-2); background: var(--glass-2); text
   .topbar .route { flex: 1 1 100%; }
   .topbar .ctx-chip { max-width: 100%; }
   .topbar-spacer { display: none; }
+  /* Toasts at the foot of the screen, clear of the top bar, which is taller here and sits lower at the top of the page. */
+  .toast-stack { top: auto; bottom: 16px; left: 16px; right: 16px; }
+  .toast { min-width: 0; max-width: none; }
 }
