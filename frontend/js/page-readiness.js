@@ -249,7 +249,10 @@ async function run(tenant) {
   try {
     const r = await api.post(`/api/readiness/${encodeURIComponent(tenant.id)}/run`, {});
     render(r.tenant, r.result);
-    toast("Check finished. Snapshot saved.", "ok");
+    // Says what happened to the snapshot: saved, not saved (with why on the Detail line), or not taken because nothing could be read.
+    if (r.result.snapshot) toast("Check finished. Snapshot saved.", "ok");
+    else if (r.result.snapshotError) toast("Check finished, but the rollback snapshot couldn't be saved.", "warn", 9000, r.result.snapshotError);
+    else toast("Check finished, but the tenant couldn't be read, so no snapshot was saved.", "warn", 9000);
   } catch (err) {
     renderEmpty(tenant, false);
     main.insertAdjacentHTML("afterbegin", errorBanner("The check didn't finish.", err.message, "err", "margin-bottom:16px"));

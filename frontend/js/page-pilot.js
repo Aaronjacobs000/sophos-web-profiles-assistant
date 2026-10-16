@@ -97,6 +97,10 @@ function tiles() {
   </div>`;
 }
 
+// What a read-back says when it confirms an Allow: the site in the list, and a new list linked to the profile.
+const CONFIRMED = new Set(["site listed", "list holds the site", "profile links it as allow"]);
+const allowConfirmed = (readBack) => !!readBack && String(readBack).split("; ").every((part) => CONFIRMED.has(part));
+
 // A Collect now that failed, whether the request was refused or the collection itself failed; the toast's detail line says why.
 const COLLECT_FAILED = "Couldn't collect events.";
 
@@ -265,7 +269,10 @@ function allowModal(plan) {
       const r = await api.post(`/api/pilot/${encodeURIComponent(tenantId)}/allow`, { host: plan.host, dryRun: false });
       close();
       const back = readBackParts(r.entry.readBack);
-      toast(`Allowed ${r.entry.site}: ${back.plain}.`, "ok", 9000, back.detail);
+      // Green only when the read-back confirmed the Allow; a list that couldn't be read, or a read-back without the site or link, leaves it unconfirmed.
+      if (allowConfirmed(r.entry.readBack)) toast(`Allowed ${r.entry.site}: ${back.plain}.`, "ok", 9000);
+      else if (back.detail) toast(`Sophos accepted the Allow for ${r.entry.site}, but the list couldn't be read back, so it isn't confirmed.`, "warn", 10000, back.detail);
+      else toast(`Sophos accepted the Allow for ${r.entry.site}, but the read-back didn't confirm it: ${back.plain}.`, "warn", 10000);
       await reread();
     } catch (err) {
       toast(`Couldn't allow ${plan.site ?? plan.host}.`, "warn", 10000, err.message);

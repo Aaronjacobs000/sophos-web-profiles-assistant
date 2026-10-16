@@ -7,7 +7,7 @@
  */
 
 import type { ReadinessLike } from "./report-types.js";
-import type { ScoreItem, Severity } from "./scorecard.js";
+import type { Scorecard, ScoreItem, Severity } from "./scorecard.js";
 
 function esc(s: unknown): string {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
@@ -39,7 +39,36 @@ const SEVERITY_LABEL: Record<Severity, string> = {
 /** Evidence lines shown per item; the rest are counted, and all of them are in the snapshot. */
 const REPORT_EVIDENCE = 12;
 
-function itemHtml(item: ScoreItem): string {
+/** Text as a sentence: a message from Sophos, such as "Sophos API error 500: InternalServerError", often has no closing full stop. */
+function sentence(text: string): string {
+  const t = text.trim();
+  return !t || /[.!?]$/.test(t) ? t : `${t}.`;
+}
+
+/** What Sophos or the tool answered, on its own Detail line, so the text above it stays plain. Empty when there's no answer. */
+function detailLine(raw: string): string {
+  const t = sentence(raw);
+  return t ? `<p class="detail" data-error-detail>Detail: ${esc(t)}</p>` : "";
+}
+
+/**
+ * A section that couldn't be read ends its item's detail, and the summary
+ * when nothing could be read, with what Sophos answered. That answer goes on
+ * the item's Detail line, and the rest stays as it is.
+ */
+function unreadAnswer(s: Scorecard, item: ScoreItem): { detail: string | undefined; raw: string } {
+  const u = item.id === "unreadable" ? s.unread[0] : item.id.startsWith("unread-") ? s.unread.find((x) => `unread-${x.section}` === item.id) : undefined;
+  if (!u?.error || !item.detail?.endsWith(u.error)) return { detail: item.detail, raw: "" };
+  return { detail: item.detail.slice(0, -u.error.length).trim(), raw: u.error };
+}
+
+function plainSummary(s: Scorecard): string {
+  const first = s.verdict === "unreadable" ? s.unread[0]?.error : "";
+  return first && s.summary.endsWith(first) ? s.summary.slice(0, -first.length).trim() : s.summary;
+}
+
+function itemHtml(item: ScoreItem, s: Scorecard): string {
+  const { detail, raw } = unreadAnswer(s, item);
   const shown = (item.evidence ?? []).slice(0, REPORT_EVIDENCE);
   const more = (item.evidence?.length ?? 0) - shown.length + (item.evidenceMore ?? 0);
   const ev = shown.length
@@ -47,7 +76,7 @@ function itemHtml(item: ScoreItem): string {
     : "";
   return `<div class="item sev-${item.severity}">
     <div class="item-title">${esc(item.title)}</div>
-    ${item.detail ? `<p>${esc(item.detail)}</p>` : ""}
+    ${detail ? `<p>${esc(detail)}</p>` : ""}${detailLine(raw)}
     ${item.fix ? `<p class="fix"><strong>What to do:</strong> ${esc(item.fix)}</p>` : ""}
     ${ev}
     ${item.topic ? `<div class="doc">Topic: ${esc(item.topic)}</div>` : ""}
@@ -61,7 +90,7 @@ export function renderReport(r: ReadinessLike, opts: { generatedAt: string; tool
     .map((sev) => {
       const list = s.items.filter((i) => i.severity === sev);
       if (!list.length) return "";
-      return `<section class="group"><h2>${SEVERITY_LABEL[sev]} <span class="count">${list.length}</span></h2>${list.map(itemHtml).join("")}</section>`;
+      return `<section class="group"><h2>${SEVERITY_LABEL[sev]} <span class="count">${list.length}</span></h2>${list.map((i) => itemHtml(i, s)).join("")}</section>`;
     })
     .join("");
 
@@ -145,6 +174,7 @@ export function renderReport(r: ReadinessLike, opts: { generatedAt: string; tool
   .ev { margin: 4px 0 0 18px; padding: 0; font-size: 9pt; color: #334; }
   .ev .more { list-style: none; margin-left: -18px; color: var(--muted); }
   .doc { font-size: 8.5pt; color: var(--muted); margin-top: 4px; }
+  .detail { font-size: 8.5pt; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; }
   table { width: 100%; border-collapse: collapse; font-size: 9pt; margin: 6px 0 10px; break-inside: auto; }
   th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
   th { color: var(--muted); font-weight: 600; font-size: 8.5pt; text-transform: uppercase; letter-spacing: .04em; }
@@ -161,7 +191,7 @@ export function renderReport(r: ReadinessLike, opts: { generatedAt: string; tool
 <header>
   <div class="eyebrow">Web filtering profiles readiness</div>
   <h1>${esc(s.headline)}</h1>
-  <p>${esc(s.summary)}</p>
+  <p>${esc(plainSummary(s))}</p>
   <p class="meta">Tenant ${esc(r.tenant.name)} (${esc(r.tenant.id)})${r.tenant.region ? `, region ${esc(r.tenant.region)}` : ""}. Read ${esc(formatWhen(r.readAt, opts.timeZone))}: ${r.calls} read-only API calls in ${(r.durationMs / 1000).toFixed(1)} s. Nothing in the tenant was changed.</p>
   <span class="unofficial">Unofficial tool, not from Sophos</span>
 </header>

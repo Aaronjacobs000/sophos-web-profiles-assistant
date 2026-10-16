@@ -84,16 +84,31 @@ export async function setEnabled(dataDir: string, tenantId: string, enabled: boo
   return s;
 }
 
-/** Tenants with collection turned on. */
-export async function enabledTenants(dataDir: string): Promise<string[]> {
+/** A tenant whose saved collection setting couldn't be read, and why (with the file). */
+export interface UnreadSetting {
+  tenantId: string;
+  error: string;
+}
+
+/**
+ * Tenants with collection turned on. A tenant whose saved setting can't be
+ * read or parsed is listed apart, with why, so one broken file doesn't stop
+ * collection for the others.
+ */
+export async function enabledTenants(dataDir: string): Promise<{ enabled: string[]; unread: UnreadSetting[] }> {
   const root = path.join(dataDir, "siem");
   const names = await fs.readdir(root).catch(() => [] as string[]);
-  const out: string[] = [];
+  const enabled: string[] = [];
+  const unread: UnreadSetting[] = [];
   for (const n of names) {
     if (!/^[0-9a-f-]{8,64}$/i.test(n)) continue;
-    if ((await loadState(dataDir, n)).enabled) out.push(n);
+    try {
+      if ((await loadState(dataDir, n)).enabled) enabled.push(n);
+    } catch (err) {
+      unread.push({ tenantId: n, error: `${err instanceof Error ? err.message : String(err)} (${path.join(root, n, "state.json")})` });
+    }
   }
-  return out;
+  return { enabled, unread };
 }
 
 function dayOf(e: SiemEvent): string {
@@ -251,22 +266,32 @@ export async function storeSummary(dataDir: string, tenantId: string): Promise<S
 }
 
 /** Collects for every opted-in tenant every `hours` hours while the server runs. 0 turns it off. */
-export function startCollector(dataDir: string, hours: number, contextFor: (tenantId: string) => { client: TenantApi; tenantId: string }): void {
+export function startCollector(dataDir: string, hours: number, contextFor: (tenantId: string) => { client: TenantApi; tenantId: string; summary?: { displayName: string } }): void {
   if (!(hours > 0)) return;
   const tick = async () => {
-    // A tenant's saved setting that can't be read or parsed skips this run, with a warning, instead of stopping the server.
-    let tenants: string[];
+    // A tenant whose saved setting can't be read or parsed is skipped, with a warning naming it; the others are still collected.
+    let tenants: Awaited<ReturnType<typeof enabledTenants>>;
     try {
       tenants = await enabledTenants(dataDir);
     } catch (err) {
       log.emit("warn", SECTION, `No SIEM collection this time: the collection settings couldn't be read. ${err instanceof Error ? err.message : String(err)}`);
       return;
     }
-    for (const t of tenants) {
+    for (const u of tenants.unread) {
+      let name = "this tenant";
+      try {
+        name = contextFor(u.tenantId).summary?.displayName ?? name;
+      } catch {
+        // A tenant the credential doesn't reach goes by its id, which the log line carries.
+      }
+      log.emit("warn", SECTION, `No SIEM collection for ${name}: its saved collection setting couldn't be read. ${u.error}`, { tenant: u.tenantId });
+    }
+    for (const t of tenants.enabled) {
       try {
         const ctx = contextFor(t);
         const run = await collect(dataDir, ctx.client, ctx.tenantId);
-        log.emit(run.ok ? "info" : "warn", SECTION, `Collected SIEM web events: ${run.added} new of ${run.web}`, { tenant: t });
+        // A run that failed was logged, with why, as it ended.
+        if (run.ok) log.emit("info", SECTION, `Collected SIEM web events: ${run.added} new of ${run.web}`, { tenant: t });
       } catch (err) {
         log.emit("warn", SECTION, `No SIEM collection: ${err instanceof Error ? err.message : String(err)}`, { tenant: t });
       }

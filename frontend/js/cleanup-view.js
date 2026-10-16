@@ -103,6 +103,16 @@ export function tableHtml(results) {
   </section>`;
 }
 
+/**
+ * Why a create stopped, in plain words: which list failed, and that the
+ * lists after it weren't sent. What Sophos answered goes on the Detail line.
+ */
+function listsFailed(made, planned, failed) {
+  const notSent = planned - made - 1;
+  const rest = notSent > 0 ? `, so ${notSent === 1 ? "the list after it wasn't" : `the ${notSent} lists after it weren't`} sent` : "";
+  return `${made ? `${made} of ${planned} site lists created and read back.` : "No site lists created."} Creating "${failed.name}" failed${rest}.`;
+}
+
 /** Wires filters, search, decisions and list buttons. `endpoints` names the page's API paths. */
 export function wireView(root, view, endpoints, rerender) {
   root.querySelectorAll("[data-filter]").forEach((b) => b.addEventListener("click", () => { filter = b.dataset.filter; rerender(view); }));
@@ -140,7 +150,9 @@ export function wireView(root, view, endpoints, rerender) {
       if (!ok) return;
       const rec = await api.post(endpoints.lists, { ...endpoints.listBody, dryRun: false });
       const made = rec.lists.filter((l) => l.status === "created").length;
-      toast(`${made} site ${made === 1 ? "list" : "lists"} created and read back.`, made === rec.lists.length ? "ok" : "warn", 8000);
+      const failed = rec.lists.find((l) => l.status === "failed");
+      if (failed) toast(listsFailed(made, plan.lists.length, failed), "warn", 10000, failed.error);
+      else toast(`${made} site ${made === 1 ? "list" : "lists"} created and read back.`, made === rec.lists.length ? "ok" : "warn", 8000);
       rerender({ ...view, lastLists: rec });
     } catch (err) {
       toast("Couldn't create the site lists.", "warn", 10000, err.message);

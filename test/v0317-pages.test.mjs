@@ -300,12 +300,12 @@ test("Allow entries: no stray separator before a failed Allow's date, an unread 
       const page = await b.evaluate(PAGE_WIDTH);
       assert.equal(page.scrollWidth, page.width, `${width} px: no sideways scroll`);
     }
-    // The toast after an Allow whose read-back couldn't read the list.
+    // The toast after an Allow whose read-back couldn't read the list. From v0.3.18 it doesn't call that plain success (v0318-pages).
     await b.evaluate(click('[data-allow="app.example.com"]'));
     await waitFor(b, `document.querySelector("#allow-go")`, "the dry run");
     await b.evaluate(click("#allow-go"));
     const toast = await waitFor(b, SPLIT(".toast"), "the toast");
-    assert.deepEqual(toast, { text: "Allowed app.example.com: not read.", details: [DETAIL(UNREAD)] });
+    assert.deepEqual(toast, { text: "Sophos accepted the Allow for app.example.com, but the list couldn't be read back, so it isn't confirmed.", details: [DETAIL(UNREAD)] });
   } finally {
     srv.close();
     await b?.close();

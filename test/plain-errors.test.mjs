@@ -6,7 +6,10 @@
 // text, less its Detail lines (any element marked data-...-detail) and the
 // Logs page's server log (raw on purpose), must not hold the raw answer, and
 // nothing may be left uncaught. Where a page shows the answer, it's on a
-// Detail line.
+// Detail line. From v0.3.18 the actions are also answered, with the raw
+// answer in the answer's fields (a snapshot that couldn't be saved, a site
+// list that failed, an Allow whose list couldn't be read back, the builds
+// list unread after a build), and the customer report is read the same way.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -15,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import express from "express";
 import { summarize } from "../backend/dist/domain/digest.js";
 import { buildScorecard } from "../backend/dist/domain/scorecard.js";
+import { renderReport } from "../backend/dist/domain/report.js";
 import { inventory } from "./fixtures.mjs";
 import { openBrowser, skipBrowser } from "./browser.mjs";
 
@@ -132,15 +136,50 @@ const ACTIONS = {
   "/welcome.html": [[click("#to-2"), `(() => { const f = document.querySelector("#cred-form"); f.clientId.value = "mock-client-id"; f.clientSecret.value = "mock-client-secret"; return true; })()`, click("#test")]],
 };
 
+/**
+ * Each action that writes and is answered, with the raw answer in a field of
+ * its answer: by page, the steps, and the answers the writes (and any read
+ * after them) get.
+ */
+const dryRec = { ...build, status: "dry-run", steps: build.steps.map((st) => ({ ...st, status: "planned", error: undefined, readBack: undefined })), checks: [{ ok: true, level: "ok", text: "Profiles: 0 in the account, 1 to add, limit 20." }] };
+const builtRec = { ...build, status: "built", steps: build.steps.map((st) => ({ ...st, status: "created", error: undefined, readBack: "matches" })), checks: dryRec.checks };
+const ANSWERS = [
+  { page: `/readiness.html?tenant=${T}`, steps: [click("#rerun")], writes: { [`POST /api/readiness/${T}/run`]: { tenant: readiness({}).tenant, result: readiness({}).result } } },
+  {
+    page: `/build.html?tenant=${T}`,
+    steps: [click("#dry"), click("#go")],
+    answers: () => {
+      let built = false;
+      return {
+        reads: { [`GET /api/build/${T}`]: () => (built ? { fail: true } : { items: [build] }) },
+        writes: { [`POST /api/build/${T}/dry-run`]: dryRec, [`POST /api/build/${T}/execute`]: () => ((built = true), builtRec) },
+      };
+    },
+  },
+  {
+    page: `/cleanup.html?tenant=${T}`,
+    steps: [click("#create-lists")],
+    writes: { [`POST /api/cleanup/${T}/lists`]: (body) => (body.dryRun ? { lists: [{ name: "Example cleaned block", action: "block", sites: ["app.example.com"] }], problems: [], leftOut: 0 } : { tenantId: T, scope: T, createdAt: now, lists: [{ name: "Example cleaned block", action: "block", sites: 1, status: "failed", error: RAW }] }) },
+  },
+  {
+    page: `/pilot.html?tenant=${T}`,
+    steps: [click("[data-allow]"), click("#allow-go")],
+    writes: { [`POST /api/pilot/${T}/allow`]: (body) => (body.dryRun ? { plan: { host: "app.example.com", site: "app.example.com", pilot, steps: [{ op: "add-site", listId: "l1", listName: "Example allows", site: "app.example.com" }], problems: [], notes: [] } } : { plan: {}, entry: allow(9, "added", { readBack: `not read: ${RAW}` }) }) },
+  },
+];
+
 /** The frontend, with an API that answers reads from s.reads (or fails them all) and fails every write with the raw answer. */
 async function server() {
-  const s = { status, readsFail: false, reads: READS };
+  const s = { status, readsFail: false, reads: READS, writes: {} };
   const app = express();
   app.use(express.json());
   app.all("/api/*", (req, res) => {
     const key = `${req.method} ${req.path}`;
     if (key === "GET /api/status") return res.json(s.status);
-    if (req.method === "GET" && !s.readsFail && s.reads[key] !== undefined) return res.json(s.reads[key]);
+    // An answer can be a function of the request body; { fail: true } from one is a failure with the raw answer.
+    const answer = req.method === "GET" ? (!s.readsFail ? s.reads[key] : undefined) : s.writes[key];
+    const out = typeof answer === "function" ? answer(req.body ?? {}) : answer;
+    if (out !== undefined && !out?.fail) return res.json(out);
     res.status(502).json({ error: "failed", message: RAW });
   });
   app.use(express.static(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "frontend")));
@@ -258,9 +297,47 @@ test("no page puts a raw answer in its main text, whether the reads fail, the re
         if (!look.details.includes(MARK)) wrong.push(`${where}: the answer isn't on a Detail line`);
       }
     }
+
+    // Every action answered, with the raw answer in a field of its answer.
+    for (const a of ANSWERS) {
+      const { reads = {}, writes = a.writes } = a.answers?.() ?? {};
+      s.status = statusFor(a.page);
+      s.reads = { ...READS, ...reads };
+      s.writes = writes;
+      const where = `action answered, ${a.page}, ${a.steps[a.steps.length - 1].slice(0, 90)}`;
+      await open(b, `${base}${a.page}`);
+      for (const st of a.steps) {
+        await b.evaluate(st);
+        await new Promise((r) => setTimeout(r, 300));
+      }
+      try {
+        await b.waitFor(".toast");
+      } catch {
+        wrong.push(`${where}: no toast`);
+      }
+      const look = await settle(b);
+      wrong.push(...problems(look, where));
+      // The toast itself says what happened, with the answer on its own Detail line.
+      const toastDetail = await b.evaluate(`[...document.querySelectorAll(".toast")].pop()?.querySelector("[data-toast-detail]")?.textContent ?? ""`);
+      if (!toastDetail.includes(MARK)) wrong.push(`${where}: the toast doesn't carry the answer on its Detail line`);
+    }
+    s.reads = READS;
+    s.writes = {};
     assert.deepEqual(wrong, []);
   } finally {
     srv.close();
     await b?.close();
+  }
+});
+
+test("the customer report puts no raw answer in its main text, whether some sections or every one couldn't be read", () => {
+  for (const [what, over] of [["some sections unread", { localSites: refused, profiles: refused }], ["nothing read", everySectionRefused]]) {
+    const r = readiness(over).result;
+    const html = renderReport({ ...r, tenant: readiness(over).tenant }, { generatedAt: now, toolVersion: "0.3.18" });
+    const body = html.slice(html.indexOf("<body>"));
+    const detail = /<p class="detail" data-error-detail>[\s\S]*?<\/p>/g;
+    const main = body.replace(detail, "");
+    assert.ok(!main.includes(MARK) && !/Sophos API error/.test(main), `${what}: the raw answer is in the report's main text`);
+    assert.ok((body.match(detail) ?? []).some((d) => d.includes(MARK)), `${what}: the answer is on a Detail line`);
   }
 });

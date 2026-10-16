@@ -45,7 +45,8 @@ async function unhandledDuring(fn) {
 const put = (file, text) => (mkdirSync(path.dirname(file), { recursive: true }), writeFileSync(file, text));
 const logged = (re) => getRingBuffer().some((l) => re.test(l.message));
 
-test("the SIEM collector's timer skips a run when a saved collection setting isn't JSON, and nothing is left unhandled", async (t) => {
+// From v0.3.18 the timer skips only that tenant, with a warning naming it, and collects the rest (v0318-fixes).
+test("the SIEM collector's timer skips a tenant whose saved collection setting isn't JSON, and nothing is left unhandled", async (t) => {
   const dir = mkdtempSync(path.join(tmpdir(), "wpa-v0317-siem-"));
   try {
     put(path.join(dir, "siem", T, "state.json"), "{not json");
@@ -56,11 +57,11 @@ test("the SIEM collector's timer skips a run when a saved collection setting isn
       });
       // The first run is a minute after the server starts.
       t.mock.timers.tick(60_000);
-      for (let i = 0; i < 200 && !logged(/No SIEM collection this time/); i++) await new Promise((r) => setImmediate(r));
+      for (let i = 0; i < 200 && !logged(/its saved collection setting couldn't be read/); i++) await new Promise((r) => setImmediate(r));
     });
     t.mock.timers.reset();
     assert.deepEqual(unhandled, [], "no unhandled rejection");
-    assert.ok(logged(/No SIEM collection this time: the collection settings couldn't be read/), "the skipped run is logged");
+    assert.ok(logged(/No SIEM collection for this tenant: its saved collection setting couldn't be read/), "the skipped tenant is logged");
   } finally {
     t.mock.timers.reset();
     rmSync(dir, { recursive: true, force: true });

@@ -130,13 +130,22 @@ function render() {
     btn.innerHTML = '<span class="spinner"></span>Building';
     try {
       lastPlan = await api.post(`/api/build/${t}/execute`, pilotFromForm());
-      builds = (await api.get(`/api/build/${t}`)).items;
-      render();
-      toast(lastPlan.status === "built" ? "Built and read back." : `${buildHeadline(lastPlan)}.`, lastPlan.status === "built" ? "ok" : "warn", 9000);
     } catch (err) {
       toast("Couldn't build the pilot.", "warn", 10000, err.message);
       render();
+      return;
     }
+    // The build has answered. A read of the builds list after it that fails doesn't change what the build did, so the toast says both.
+    const outcome = lastPlan.status === "built" ? "Built and read back." : `${buildHeadline(lastPlan)}.`;
+    try {
+      builds = (await api.get(`/api/build/${t}`)).items;
+    } catch (err) {
+      render();
+      toast(`${outcome} The list of builds couldn't be read again, so it doesn't show this build yet.`, "warn", 10000, err.message);
+      return;
+    }
+    render();
+    toast(outcome, lastPlan.status === "built" ? "ok" : "warn", 9000);
   });
   main.querySelectorAll("[data-rollback]").forEach((b) =>
     b.addEventListener("click", async () => {

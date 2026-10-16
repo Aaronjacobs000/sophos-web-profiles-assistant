@@ -7,7 +7,8 @@
 // (an /api error is JSON with a message), and the log must not show an
 // unhandled error. The background jobs run too: the SIEM collector's first
 // run (brought forward from a minute to a moment), a clean-up run and an
-// estate scan.
+// estate scan. From v0.3.18 the collector's run must also get past a tenant
+// whose saved setting is broken: it names that tenant and collects the rest.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -28,6 +29,8 @@ import { pilotRouter } from "../backend/dist/routes/pilot.js";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const T = "00000000-0000-4000-a000-000000000001";
 const P = "66666666-6666-4666-8666-666666666666";
+/** A second tenant whose saved collection setting is broken. */
+const T2 = "00000000-0000-4000-a000-000000000002";
 const ID = "88888888-0000-4000-8000-000000000001";
 const BUILD = "55555555-5555-4555-8555-555555555552";
 const SNAP = "example-tenant_20261016-010000.json";
@@ -197,8 +200,14 @@ async function send(base, c) {
 }
 
 const PHASES = [
-  { name: "every Sophos answer refused, every saved file broken", mode: "tenant", answer: "refuse", prepare: (d) => (seedRecords(d), corruptRecords(d)), collector: /No SIEM collection this time/ },
-  { name: "every Sophos read an empty object, every record in place", mode: "tenant", answer: "garble", prepare: seedRecords, collector: /Collected SIEM web events/ },
+  { name: "every Sophos answer refused, every saved file broken", mode: "tenant", answer: "refuse", prepare: (d) => (seedRecords(d), corruptRecords(d)), collector: [/No SIEM collection for [^:]+: its saved collection setting couldn't be read/] },
+  {
+    name: "every Sophos read an empty object, every record in place but a second tenant's collection setting",
+    mode: "tenant",
+    answer: "garble",
+    prepare: (d) => (seedRecords(d), put(path.join(d, "siem", T2, "state.json"), "{not json")),
+    collector: [/No SIEM collection for this tenant: its saved collection setting couldn't be read/, /Collected SIEM web events/],
+  },
   { name: "every Sophos answer refused, nothing can be saved", mode: "tenant", answer: "refuse", prepare: (d) => (seedRecords(d), unsavable(d)) },
   { name: "a partner credential, every Sophos answer refused, the saved estate broken", mode: "partner", answer: "refuse", prepare: corruptRecords },
 ];
@@ -238,7 +247,7 @@ for (const phase of PHASES) {
       assert.equal(s.child.exitCode, null, `the server stopped:\n${s.out.text.split("\n").slice(-15).join("\n")}`);
       assert.equal((await send(s.base, { method: "GET", url: "/api/status" })).status, 200, "the server still answers");
       assert.ok(!/unhandled/i.test(s.out.text), `nothing was left unhandled:\n${s.out.text.split("\n").filter((l) => /unhandled/i.test(l)).slice(0, 5).join("\n")}`);
-      if (phase.collector) assert.match(s.out.text, phase.collector, "the collector's first run happened, and ended as it should");
+      for (const re of phase.collector ?? []) assert.match(s.out.text, re, "the collector's first run happened, and ended as it should");
     } finally {
       await s.stop();
     }
