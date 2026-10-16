@@ -19,7 +19,11 @@ function partnerOr409(res: import("express").Response) {
 estateRouter.get("/estate", async (_req, res) => {
   const p = partnerOr409(res);
   if (!p) return;
-  res.json(await getEstate(getState().dataDir, p));
+  try {
+    res.json(await getEstate(getState().dataDir, p));
+  } catch (err) {
+    res.status(500).json({ error: "read_failed", message: err instanceof Error ? err.message : String(err) });
+  }
 });
 
 /** POST /api/estate/scan { tenantIds?: string[] } */

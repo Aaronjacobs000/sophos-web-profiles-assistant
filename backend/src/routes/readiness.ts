@@ -64,7 +64,11 @@ readinessRouter.post("/readiness/:tenantId/run", jsonOnly, async (req, res) => {
 readinessRouter.get("/snapshots/:tenantId", async (req, res) => {
   const t = tenantFor(req, res);
   if (!t) return;
-  res.json({ items: await listSnapshots(getState().dataDir, t.tenant.id) });
+  try {
+    res.json({ items: await listSnapshots(getState().dataDir, t.tenant.id) });
+  } catch (err) {
+    res.status(500).json({ error: "read_failed", message: err instanceof Error ? err.message : String(err) });
+  }
 });
 
 readinessRouter.get("/snapshots/:tenantId/:file", async (req, res) => {
@@ -79,6 +83,12 @@ readinessRouter.get("/snapshots/:tenantId/:file", async (req, res) => {
     res.status(404).json({ error: "not_found", message: err instanceof Error ? err.message : String(err) });
   }
 });
+
+/** A report that can't be made (a result file without its fields) answers 500 instead of leaving the error unhandled. */
+function reportFailed(res: Response, err: unknown): null {
+  res.status(500).json({ error: "report_failed", message: err instanceof Error ? err.message : String(err) });
+  return null;
+}
 
 async function reportHtml(req: Request, res: Response): Promise<{ html: string; name: string } | null> {
   const t = tenantFor(req, res);
@@ -100,14 +110,14 @@ async function reportHtml(req: Request, res: Response): Promise<{ html: string; 
 }
 
 readinessRouter.get("/report/:tenantId.html", async (req, res) => {
-  const r = await reportHtml(req, res);
+  const r = await reportHtml(req, res).catch((err) => reportFailed(res, err));
   if (!r) return;
   if (req.query.download === "1") res.setHeader("Content-Disposition", `attachment; filename="${r.name}.html"`);
   res.type("text/html").send(r.html);
 });
 
 readinessRouter.get("/report/:tenantId.pdf", async (req, res) => {
-  const r = await reportHtml(req, res);
+  const r = await reportHtml(req, res).catch((err) => reportFailed(res, err));
   if (!r) return;
   try {
     const pdf = await htmlToPdf(r.html);

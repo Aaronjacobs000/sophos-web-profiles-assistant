@@ -65,7 +65,11 @@ pilotRouter.post("/pilot/:tenantId/collect", jsonOnly, async (req, res) => {
 pilotRouter.put("/pilot/:tenantId/schedule", jsonOnly, async (req, res) => {
   const ctx = ctxOr404(req, res);
   if (!ctx) return;
-  res.json(await setEnabled(getState().dataDir, ctx.tenantId, (req.body as { enabled?: boolean }).enabled === true));
+  try {
+    res.json(await setEnabled(getState().dataDir, ctx.tenantId, (req.body as { enabled?: boolean }).enabled === true));
+  } catch (err) {
+    fail(res, err, 500);
+  }
 });
 
 pilotRouter.post("/pilot/:tenantId/import", jsonOnly, async (req, res) => {

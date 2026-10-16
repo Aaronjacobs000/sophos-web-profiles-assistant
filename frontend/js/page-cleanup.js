@@ -50,7 +50,7 @@ function render(view) {
       await api.post(`/api/cleanup/${t}/run`, { dns: main.querySelector("#opt-dns").checked, intelix: main.querySelector("#opt-intelix").checked });
       load();
     } catch (err) {
-      toast(err.message, "warn", 8000);
+      toast("Couldn't start the clean-up.", "warn", 8000, err.message);
     }
   });
   if (view.results) wireView(main, view, { decisions: `/api/cleanup/${t}/decisions`, lists: `/api/cleanup/${t}/lists`, listBody: {} }, render);

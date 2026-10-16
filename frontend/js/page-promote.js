@@ -191,7 +191,7 @@ function wire() {
       const r = await api.post(`/api/promote/${t}/enabled`, { enabled: on });
       toast(`Pilot ${r.enabled ? "on" : "off"}. Read back: ${r.readBack}.`, r.readBack === "matches" ? "ok" : "warn", 8000);
     } catch (err) {
-      toast(err.message, "warn", 9000);
+      toast(`Couldn't turn the pilot ${on ? "on" : "off"}.`, "warn", 9000, err.message);
     }
     await refresh();
   });
@@ -209,9 +209,10 @@ function wire() {
         b.disabled = true;
         b.innerHTML = '<span class="spinner"></span>Moving';
         const r = await api.post(`/api/promote/${t}/wave`, { devices: ids, dryRun: false });
-        toast(r.status === "moved" ? `Wave moved. Read back: ${r.readBack}.` : `Wave ${r.status}: ${r.error ?? ""}`, r.status === "moved" ? "ok" : "warn", 9000);
+        if (r.status === "moved") toast(`Wave moved. Read back: ${r.readBack}.`, "ok", 9000);
+        else toast(`Couldn't move wave ${wave.n}.`, "warn", 9000, r.error);
       } catch (err) {
-        toast(err.message, "warn", 9000);
+        toast(`Couldn't move wave ${wave.n}.`, "warn", 9000, err.message);
       }
       await refresh();
     }),
@@ -221,9 +222,10 @@ function wire() {
       if (!window.confirm("Put the pilot's assignment back as it was before this wave?")) return;
       try {
         const r = await api.post(`/api/promote/${t}/wave/${encodeURIComponent(b.dataset.undoWave)}/undo`, {});
-        toast(r.status === "undone" ? `Undone. ${r.readBack}.` : `Undo failed: ${r.error}`, r.status === "undone" ? "ok" : "warn", 9000);
+        if (r.status === "undone") toast(`Undone. ${r.readBack}.`, "ok", 9000);
+        else toast("Couldn't undo the wave.", "warn", 9000, r.error);
       } catch (err) {
-        toast(err.message, "warn", 9000);
+        toast("Couldn't undo the wave.", "warn", 9000, err.message);
       }
       await refresh();
     }),
@@ -239,7 +241,7 @@ function wire() {
       retirePlan = await api.post(`/api/retire/${t}/plan`, { tags: chosenTags });
       render();
     } catch (err) {
-      toast(err.message, "warn", 9000);
+      toast("Couldn't run the dry run.", "warn", 9000, err.message);
     }
   });
   main.querySelector("#go-retire")?.addEventListener("click", async (e) => {
@@ -254,7 +256,7 @@ function wire() {
       retirePlan = null;
       chosenTags = [];
     } catch (err) {
-      toast(err.message, "warn", 10000);
+      toast("Couldn't retire the tags.", "warn", 10000, err.message);
     }
     await refresh();
   });
@@ -267,7 +269,7 @@ function wire() {
         const r = await api.post(`/api/retire/${t}/${encodeURIComponent(b.dataset.restore)}/restore`, {});
         toast(`${retireStatus(r.status)}.`, r.status === "restored" ? "ok" : "warn", 9000);
       } catch (err) {
-        toast(err.message, "warn", 10000);
+        toast("Couldn't restore the tags.", "warn", 10000, err.message);
       }
       await refresh();
     }),
@@ -278,7 +280,7 @@ function wire() {
       try {
         diff = await api.post(`/api/diff/${t}`, { snapshotFile: b.dataset.diff });
       } catch (err) {
-        toast(err.message, "warn", 10000);
+        toast("Couldn't compare with the snapshot.", "warn", 10000, err.message);
       }
       render();
     }),

@@ -118,7 +118,7 @@ export function wireView(root, view, endpoints, rerender) {
         const next = await api.put(endpoints.decisions, { decisions: { [id]: decision } });
         rerender({ ...view, ...next });
       } catch (err) {
-        toast(err.message, "warn", 8000);
+        toast("Couldn't save the decision.", "warn", 8000, err.message);
       }
     }),
   );
@@ -136,7 +136,7 @@ export function wireView(root, view, endpoints, rerender) {
       toast(`${made} site ${made === 1 ? "list" : "lists"} created and read back.`, made === rec.lists.length ? "ok" : "warn", 8000);
       rerender({ ...view, lastLists: rec });
     } catch (err) {
-      toast(err.message, "warn", 10000);
+      toast("Couldn't create the site lists.", "warn", 10000, err.message);
     }
   });
   root.querySelector("#undo-lists")?.addEventListener("click", async () => {
@@ -146,7 +146,7 @@ export function wireView(root, view, endpoints, rerender) {
       toast(`Undo: ${rec.lists.map((l) => `${l.name} ${l.status}`).join(", ")}.`, "ok", 8000);
       rerender({ ...view, lastLists: rec });
     } catch (err) {
-      toast(err.message, "warn", 10000);
+      toast("Couldn't undo the site lists.", "warn", 10000, err.message);
     }
   });
 }

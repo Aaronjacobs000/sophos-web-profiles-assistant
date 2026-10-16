@@ -102,6 +102,9 @@ a.ctx-chip:hover { border-color: var(--line-2); background: var(--glass-2); text
 .order-list .o-name { color: var(--ink-1); font-weight: 550; min-width: 0; overflow-wrap: anywhere; }
 .order-list .o-meta { color: var(--ink-3); font-size: 12px; white-space: nowrap; text-align: right; }
 .order-list .o-kind { display: block; font-size: 11px; color: var(--ink-4); font-weight: 500; }
+/* A plain line on a row that carries an error, and what Sophos or the tool answered under it. */
+.order-list .o-note { display: block; margin-top: 4px; font-size: 12px; color: var(--ink-2); font-weight: 400; }
+.order-list .o-detail { display: block; font-size: 12px; color: var(--ink-3); font-weight: 400; overflow-wrap: anywhere; }
 .mini-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .mini-table td, .mini-table th { padding: 6px 0; border-top: 1px solid var(--line); text-align: left; }
 .mini-table th { font-size: 10.5px; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-4); border-top: 0; }

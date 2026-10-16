@@ -18,6 +18,8 @@ let pilotOnly = false;
 const n = (x) => Number(x ?? 0).toLocaleString("en-US");
 const when = (iso) => (iso ? new Date(iso).toLocaleString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "");
 const ALLOW_STATUS = { added: '<span class="tag tag-ok">Added</span>', undone: '<span class="tag tag-muted">Undone</span>', failed: '<span class="tag tag-bad">Failed</span>', "undo-failed": '<span class="tag tag-bad">Undo failed</span>' };
+// The plain line on an Allow entry that carries an error; what Sophos or the tool answered goes on the Detail line under it.
+const ALLOW_ERROR = { failed: "The Allow didn't finish.", "undo-failed": "The undo didn't finish. Undo again, or check the list in Sophos Fusion.", earlier: "An earlier undo didn't finish." };
 
 function pilotCard() {
   const p = view.pilot;
@@ -59,7 +61,8 @@ function collectionCard() {
   return `<section class="panel-card"><h2>Collection</h2>
     <p class="hint">The SIEM API keeps about 24 hours of events, so the tool collects them into this computer. Collect at least daily for the length of the pilot.</p>
     <label class="checkbox cu-options"><input type="checkbox" id="schedule"${s.state.enabled ? " checked" : ""}/> Collect every few hours while the tool runs</label>
-    <p class="hint">Last collection: ${last ? `${relTime(last.at)}, ${last.ok ? `${n(last.added)} new of ${n(last.web)} web events` : `failed: ${esc(last.error ?? "")}`}` : "never"}.${last?.gap ? ` ${esc(last.gap)}` : ""} For a schedule without the tool open, run <code>npm run collect</code> daily.</p>
+    <p class="hint">Last collection: ${last ? `${relTime(last.at)}, ${last.ok ? `${n(last.added)} new of ${n(last.web)} web events` : "failed"}` : "never"}.${last?.gap ? ` ${esc(last.gap)}` : ""} For a schedule without the tool open, run <code>npm run collect</code> daily.</p>
+    ${last && !last.ok && last.error ? `<p class="hint" style="overflow-wrap:anywhere" data-collect-detail>Detail: ${esc(sentence(last.error))}</p>` : ""}
     ${rows ? `<table class="mini-table"><thead><tr><th>Day</th><th>Events</th><th>Imported</th></tr></thead><tbody>${rows}</tbody></table>` : '<p class="muted">No events stored yet.</p>'}
   </section>`;
 }
@@ -69,7 +72,7 @@ function allowsCard() {
   const current = view.pilot ? view.allows.filter((a) => a.buildId === view.pilot.buildId) : view.allows;
   const earlier = view.allows.length - current.length;
   const rows = current
-    .map((a) => `<li><span class="o-name">${esc(a.site)}<span class="o-kind">${esc(a.listName || "")} · ${when(a.at)}${a.readBack ? ` · ${esc(a.readBack)}` : ""}${a.error ? ` · ${esc(a.error)}` : ""}</span></span><span class="o-meta">${a.status === "added" && a.buildStatus === "rolled-back" ? '<span class="tag tag-muted">Removed with the build</span>' : `${ALLOW_STATUS[a.status] ?? ""}${["added", "undo-failed"].includes(a.status) ? ` <button class="btn btn-small" data-undo="${escAttr(a.id)}">Undo</button>` : ""}`}</span></li>`)
+    .map((a) => `<li><span class="o-name">${esc(a.site)}<span class="o-kind">${esc(a.listName || "")} · ${when(a.at)}${a.readBack ? ` · ${esc(a.readBack)}` : ""}</span>${a.error ? `<span class="o-note">${ALLOW_ERROR[a.status] ?? ALLOW_ERROR.earlier}</span><span class="o-detail" data-allow-detail>Detail: ${esc(sentence(a.error))}</span>` : ""}</span><span class="o-meta">${a.status === "added" && a.buildStatus === "rolled-back" ? '<span class="tag tag-muted">Removed with the build</span>' : `${ALLOW_STATUS[a.status] ?? ""}${["added", "undo-failed"].includes(a.status) ? ` <button class="btn btn-small" data-undo="${escAttr(a.id)}">Undo</button>` : ""}`}</span></li>`)
     .join("");
   return `<section class="panel-card"><h2>Allow entries</h2>${rows ? `<ul class="order-list">${rows}</ul>` : '<p class="muted">None yet. Allow a host from the sites table.</p>'}${earlier ? `<p class="hint">${earlier} more ${earlier === 1 ? "entry belongs" : "entries belong"} to earlier builds.</p>` : ""}</section>`;
 }

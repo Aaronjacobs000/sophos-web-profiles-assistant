@@ -110,7 +110,7 @@ function render() {
       diff = null;
       render();
     } catch (err) {
-      toast(err.message, "warn", 9000);
+      toast("Couldn't run the dry run.", "warn", 9000, err.message);
     }
   });
   main.querySelector("#go").addEventListener("click", async () => {
@@ -124,7 +124,7 @@ function render() {
       render();
       toast(lastPlan.status === "built" ? "Built and read back." : `${buildHeadline(lastPlan)}.`, lastPlan.status === "built" ? "ok" : "warn", 9000);
     } catch (err) {
-      toast(err.message, "warn", 10000);
+      toast("Couldn't build the pilot.", "warn", 10000, err.message);
       render();
     }
   });
@@ -140,7 +140,7 @@ function render() {
         render();
         toast(`${buildHeadline(lastPlan)}.`, lastPlan.status === "rolled-back" ? "ok" : "warn", 9000);
       } catch (err) {
-        toast(err.message, "warn", 10000);
+        toast("Couldn't roll back the build.", "warn", 10000, err.message);
       }
     }),
   );
@@ -151,7 +151,7 @@ function render() {
         diff = await api.post(`/api/diff/${t}`, { snapshotFile: b.dataset.diff });
         render();
       } catch (err) {
-        toast(err.message, "warn", 10000);
+        toast("Couldn't compare with the snapshot.", "warn", 10000, err.message);
         render();
       }
     }),

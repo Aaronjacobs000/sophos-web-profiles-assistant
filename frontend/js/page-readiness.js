@@ -206,7 +206,7 @@ function wirePdf() {
       link.remove();
       setTimeout(() => URL.revokeObjectURL(url), 10_000);
     } catch (err) {
-      toast(err.message, "warn", 9000);
+      toast("Couldn't make the PDF.", "warn", 9000, err.message);
     } finally {
       a.innerHTML = label;
     }

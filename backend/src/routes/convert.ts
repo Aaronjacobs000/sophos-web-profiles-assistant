@@ -112,8 +112,12 @@ function cleanupView(run: Awaited<ReturnType<typeof getRun>>, prefix: string) {
 convertRouter.get("/cleanup/:tenantId", async (req, res) => {
   const ctx = ctxOr404(req, res);
   if (!ctx) return;
-  const run = await getRun(getState().dataDir, ctx.tenantId);
-  res.json({ ...cleanupView(run, `${ctx.summary.displayName} cleaned`), lastLists: await lastListsRecord(getState().dataDir, ctx.tenantId), intelix: intelixView().configured });
+  try {
+    const run = await getRun(getState().dataDir, ctx.tenantId);
+    res.json({ ...cleanupView(run, `${ctx.summary.displayName} cleaned`), lastLists: await lastListsRecord(getState().dataDir, ctx.tenantId), intelix: intelixView().configured });
+  } catch (err) {
+    fail(res, err, 500);
+  }
 });
 
 convertRouter.post("/cleanup/:tenantId/run", jsonOnly, async (req, res) => {
@@ -157,7 +161,7 @@ async function sendCsv(res: Response, scope: string, prefix: string, which: stri
 convertRouter.get("/cleanup/:tenantId/:which.csv", async (req, res) => {
   const ctx = ctxOr404(req, res);
   if (!ctx) return;
-  await sendCsv(res, ctx.tenantId, `${ctx.summary.displayName} cleaned`, String(req.params.which));
+  await sendCsv(res, ctx.tenantId, `${ctx.summary.displayName} cleaned`, String(req.params.which)).catch((err) => fail(res, err, 500));
 });
 
 convertRouter.post("/cleanup/:tenantId/lists", jsonOnly, async (req, res) => {
@@ -180,8 +184,12 @@ convertRouter.post("/cleanup/:tenantId/lists", jsonOnly, async (req, res) => {
 // ---------- standalone site list cleaner ----------
 
 convertRouter.get("/cleaner", async (_req, res) => {
-  const run = await getRun(getState().dataDir, "cleaner");
-  res.json({ ...cleanupView(run, "Cleaned"), intelix: intelixView().configured, lastLists: await lastListsRecord(getState().dataDir, "cleaner") });
+  try {
+    const run = await getRun(getState().dataDir, "cleaner");
+    res.json({ ...cleanupView(run, "Cleaned"), intelix: intelixView().configured, lastLists: await lastListsRecord(getState().dataDir, "cleaner") });
+  } catch (err) {
+    fail(res, err, 500);
+  }
 });
 
 /** POST /api/cleaner/classify { text?, tenantId?, defaultAction, preset, dns, intelix } */
@@ -222,7 +230,7 @@ convertRouter.put("/cleaner/decisions", jsonOnly, async (req, res) => {
 });
 
 convertRouter.get("/cleaner/:which.csv", async (req, res) => {
-  await sendCsv(res, "cleaner", "Cleaned", String(req.params.which));
+  await sendCsv(res, "cleaner", "Cleaned", String(req.params.which)).catch((err) => fail(res, err, 500));
 });
 
 convertRouter.post("/cleaner/lists", jsonOnly, async (req, res) => {
@@ -276,10 +284,14 @@ convertRouter.put("/design/:tenantId", jsonOnly, async (req, res) => {
     Object.entries((req.body as { genAi?: Record<string, string> }).genAi ?? {}).filter(([, v]) => ACTIONS.includes(v as FilterAction)),
   ) as Record<string, FilterAction>;
   const file = choicesPath(ctx.tenantId);
-  await fs.mkdir(path.dirname(file), { recursive: true });
-  await saveFile(file, JSON.stringify({ genAi }), { section: "design", mode: 0o600 });
-  const { design } = await designFor(getState().dataDir, ctx, genAi);
-  res.json({ design, genAi });
+  try {
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await saveFile(file, JSON.stringify({ genAi }), { section: "design", mode: 0o600 });
+    const { design } = await designFor(getState().dataDir, ctx, genAi);
+    res.json({ design, genAi });
+  } catch (err) {
+    fail(res, err, 500);
+  }
 });
 
 /** Who the pilot can go to: user groups, device groups, and devices with their eligibility. */
@@ -322,7 +334,11 @@ function pilotFrom(body: unknown): PilotOptions {
 convertRouter.get("/build/:tenantId", async (req, res) => {
   const ctx = ctxOr404(req, res);
   if (!ctx) return;
-  res.json({ items: await listBuilds(getState().dataDir, ctx.tenantId) });
+  try {
+    res.json({ items: await listBuilds(getState().dataDir, ctx.tenantId) });
+  } catch (err) {
+    fail(res, err, 500);
+  }
 });
 
 convertRouter.get("/build/:tenantId/:buildId", async (req, res) => {

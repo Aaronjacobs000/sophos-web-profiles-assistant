@@ -42,6 +42,8 @@
   --glass-3: rgba(255, 255, 255, 0.1);
   --panel: rgba(10, 15, 29, 0.58);
   --panel-strong: rgba(13, 19, 36, 0.94);
+  /* --panel-strong with nothing showing through, for toasts over the page. */
+  --panel-solid: rgb(13, 19, 36);
   --field: rgba(6, 9, 15, 0.5);
   --line: rgba(255, 255, 255, 0.08);
   --line-2: rgba(255, 255, 255, 0.14);

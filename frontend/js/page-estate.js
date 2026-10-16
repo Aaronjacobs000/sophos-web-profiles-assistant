@@ -177,7 +177,7 @@ async function scan() {
     render(await api.post("/api/estate/scan", {}));
     toast("Scan started.", "ok");
   } catch (err) {
-    toast(err.message, "warn", 8000);
+    toast("Couldn't start the scan.", "warn", 8000, err.message);
   }
 }
 

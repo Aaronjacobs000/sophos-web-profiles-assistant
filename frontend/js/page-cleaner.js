@@ -60,7 +60,7 @@ function render(view) {
     try {
       render(await api.post("/api/cleaner/classify", body));
     } catch (err) {
-      toast(err.message, "warn", 9000);
+      toast("Couldn't classify the sites.", "warn", 9000, err.message);
       btn.disabled = false;
       btn.innerHTML = `${icon("play")}Classify`;
     }
