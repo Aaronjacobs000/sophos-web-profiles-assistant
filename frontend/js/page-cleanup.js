@@ -3,7 +3,7 @@
 
 import { api } from "./api.js";
 import { currentTenantId, getStatus, initShell, setTenant } from "./shell.js";
-import { esc } from "./ui.js";
+import { errorBanner, esc } from "./ui.js";
 import { icon } from "./icons.js";
 import { toast } from "./toast.js";
 import { listsHtml, n, summaryHtml, tableHtml, wireView } from "./cleanup-view.js";
@@ -39,8 +39,8 @@ function render(view) {
         <button class="btn btn-primary" id="run"${running ? " disabled" : ""}>${icon("play")}${run ? "Run again" : "Run the clean-up"}</button>
       </div>
       ${running ? `<div style="margin-top:14px"><p class="running-line" style="justify-content:flex-start"><span class="spinner"></span>Checked ${n(run.done)} of ${n(run.total)} entries</p><div class="bar"><div class="bar-fill is-live" style="width:${run.total ? (run.done / run.total) * 100 : 0}%"></div></div></div>` : ""}
-      ${run?.intelixError ? `<div class="banner banner-warn" style="margin-top:12px">Intelix stopped: ${esc(run.intelixError)}</div>` : ""}
-      ${run?.error ? `<div class="banner banner-err" style="margin-top:12px">${esc(run.error)}</div>` : ""}
+      ${run?.intelixError ? errorBanner("Intelix refused the lookups, so the remaining entries weren't looked up.", run.intelixError, "warn", "margin-top:12px") : ""}
+      ${run?.error ? errorBanner("The clean-up didn't finish.", run.error, "err", "margin-top:12px") : ""}
       ${!view.intelix ? '<p class="hint" style="margin-top:10px">Without Intelix, entries that resolve are kept as exceptions until you decide them. Decide in the table, or export the CSV, decide there, and come back.</p>' : ""}
     </section>
     ${s ? `<section class="panel-card">${summaryHtml(s)}${listsHtml({ ...view, canCreate: true }, `/api/cleanup/${t}`)}</section>${tableHtml(view.results)}` : ""}
@@ -63,7 +63,7 @@ async function load() {
     const view = await api.get(`/api/cleanup/${encodeURIComponent(tenantId)}`);
     render(view);
   } catch (err) {
-    main.innerHTML = `<div class="banner banner-err">${esc(err.message)}</div>`;
+    main.innerHTML = errorBanner("Couldn't read the clean-up.", err.message);
   }
 }
 

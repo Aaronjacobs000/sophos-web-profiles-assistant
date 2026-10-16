@@ -3,7 +3,7 @@
 
 import { api } from "./api.js";
 import { currentTenantId, getStatus, initShell, setTenant } from "./shell.js";
-import { esc, escAttr } from "./ui.js";
+import { detailHtml, errorBanner, esc, escAttr } from "./ui.js";
 import { icon } from "./icons.js";
 import { toast } from "./toast.js";
 
@@ -28,7 +28,24 @@ function plural(count, one, many = `${one}s`) {
   return `${n(count)} ${count === 1 ? one : many}`;
 }
 
-function itemHtml(item) {
+/**
+ * A section that couldn't be read ends its item's detail, and the summary when
+ * nothing could be read, with what Sophos answered. That answer goes on the
+ * item's Detail line, and the rest stays as it is.
+ */
+function unreadAnswer(sc, item) {
+  const u = item.id === "unreadable" ? sc.unread[0] : item.id.startsWith("unread-") ? sc.unread.find((x) => `unread-${x.section}` === item.id) : null;
+  if (!u?.error || !item.detail?.endsWith(u.error)) return { detail: item.detail, raw: "" };
+  return { detail: item.detail.slice(0, -u.error.length).trim(), raw: u.error };
+}
+
+function plainSummary(sc) {
+  const first = sc.verdict === "unreadable" ? sc.unread[0]?.error : "";
+  return first && sc.summary.endsWith(first) ? sc.summary.slice(0, -first.length).trim() : sc.summary;
+}
+
+function itemHtml(item, sc) {
+  const { detail, raw } = unreadAnswer(sc, item);
   const ev = item.evidence?.length
     ? `<details class="score-ev"><summary>${item.evidence.length + (item.evidenceMore ?? 0) === 1 ? "Show the one item" : `Show ${n(item.evidence.length + (item.evidenceMore ?? 0))} items`}</summary><ul>${item.evidence
         .map((e) => `<li>${esc(e)}</li>`)
@@ -37,7 +54,7 @@ function itemHtml(item) {
   return `<div class="score-item" data-id="${escAttr(item.id)}">
     <div>
       <div class="score-title">${esc(item.title)}</div>
-      ${item.detail ? `<p class="score-detail">${esc(item.detail)}</p>` : ""}
+      ${detail ? `<p class="score-detail">${esc(detail)}</p>` : ""}${detailHtml(raw)}
       ${item.fix ? `<p class="score-fix"><b>What to do:</b> ${esc(item.fix)}</p>` : ""}
     </div>
     ${item.topic ? `<span class="tag tag-muted score-doc" title="Topic">${esc(item.topic)}</span>` : ""}
@@ -52,7 +69,7 @@ function groupsHtml(sc) {
     if (!list.length) continue;
     out.push(`<section class="panel-card sev-${g.sev}">
       <div class="group-head"><h2>${g.title}</h2><span class="group-count">${list.length}</span></div>
-      ${list.map(itemHtml).join("")}
+      ${list.map((i) => itemHtml(i, sc)).join("")}
     </section>`);
   }
   const ok = sc.items.filter((i) => i.severity === "ok");
@@ -139,7 +156,7 @@ function snapshotHtml(tenantId, r) {
   const report = `<a class="btn" href="/api/report/${encodeURIComponent(tenantId)}.html?download=1&tz=${encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone)}">${icon("download")}Customer report (HTML)</a>
     <a class="btn" id="pdf" href="/api/report/${encodeURIComponent(tenantId)}.pdf?tz=${encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone)}">${icon("download")}Customer report (PDF)</a>`;
   if (!r.snapshot) {
-    return `<section class="panel-card snapshot-bar"><p><strong>No rollback snapshot.</strong> ${esc(r.snapshotError ?? "The tenant couldn't be read.")}</p><div class="head-actions">${report}</div></section>`;
+    return `<section class="panel-card snapshot-bar"><p><strong>No rollback snapshot.</strong> ${r.snapshotError ? "It couldn't be saved." : "The tenant couldn't be read."}${detailHtml(r.snapshotError)}</p><div class="head-actions">${report}</div></section>`;
   }
   return `<section class="panel-card snapshot-bar">
     <p><strong>Rollback snapshot saved.</strong> ${plural(counts.policies.length, "Web Control policy", "Web Control policies")}, ${wm === undefined ? "" : `${plural(wm, "Website Management entry", "Website Management entries")}, `}${plural(counts.decryption.length, "Threat Protection policy", "Threat Protection policies")}, and every profile and site list, as read.<br /><code>${esc(r.snapshot.file)}</code></p>
@@ -160,7 +177,7 @@ function render(tenant, r) {
       <div>
         <span class="eyebrow">Readiness, read ${when(r.readAt)}</span>
         <h1>${esc(sc.headline)}</h1>
-        <p class="page-lead">${esc(sc.summary)}</p>
+        <p class="page-lead">${esc(plainSummary(sc))}</p>
       </div>
       <div class="head-actions">
         <button class="btn btn-lg" id="rerun">${icon("refresh")}Check again</button>
@@ -235,7 +252,7 @@ async function run(tenant) {
     toast("Check finished. Snapshot saved.", "ok");
   } catch (err) {
     renderEmpty(tenant, false);
-    main.insertAdjacentHTML("afterbegin", `<div class="banner banner-err" style="margin-bottom:16px">${esc(err.message)}</div>`);
+    main.insertAdjacentHTML("afterbegin", errorBanner("The check didn't finish.", err.message, "err", "margin-bottom:16px"));
   }
 }
 
@@ -257,7 +274,7 @@ async function start() {
     } else if (new URLSearchParams(location.search).get("run") === "1") run(r.tenant);
     else renderEmpty(r.tenant, false);
   } catch (err) {
-    main.innerHTML = `<div class="banner banner-err">${esc(err.message)}</div>`;
+    main.innerHTML = errorBanner("Couldn't read the readiness check for this tenant.", err.message);
   }
 }
 

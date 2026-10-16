@@ -4,7 +4,7 @@
 
 import { api } from "./api.js";
 import { getStatus, initShell } from "./shell.js";
-import { esc, escAttr } from "./ui.js";
+import { errorBanner, esc, escAttr } from "./ui.js";
 import { icon } from "./icons.js";
 import { toast } from "./toast.js";
 import { listsHtml, summaryHtml, tableHtml, wireView } from "./cleanup-view.js";
@@ -75,8 +75,12 @@ async function start() {
   await initShell({ allowUnconfigured: true });
   const status = getStatus();
   const tenant = status?.mode === "tenant" ? status.tenant?.tenantId : null;
-  presets = (await api.get(`/api/presets${tenant ? `?tenant=${encodeURIComponent(tenant)}` : ""}`)).items;
-  render(await api.get("/api/cleaner"));
+  try {
+    presets = (await api.get(`/api/presets${tenant ? `?tenant=${encodeURIComponent(tenant)}` : ""}`)).items;
+    render(await api.get("/api/cleaner"));
+  } catch (err) {
+    main.innerHTML = errorBanner("Couldn't open the site list cleaner.", err.message);
+  }
 }
 
 start();

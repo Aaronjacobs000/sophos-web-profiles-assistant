@@ -4,7 +4,7 @@
 
 import { api } from "./api.js";
 import { currentTenantId, getStatus, initShell, setTenant } from "./shell.js";
-import { esc, escAttr } from "./ui.js";
+import { errorBanner, esc, escAttr } from "./ui.js";
 import { toast } from "./toast.js";
 
 const main = document.getElementById("main");
@@ -80,7 +80,7 @@ async function start() {
   try {
     render(await api.get(`/api/design/${encodeURIComponent(tenantId)}`));
   } catch (err) {
-    main.innerHTML = `<div class="banner banner-err">${esc(err.message)}</div>`;
+    main.innerHTML = errorBanner("Couldn't read the classic policies.", err.message);
   }
 }
 

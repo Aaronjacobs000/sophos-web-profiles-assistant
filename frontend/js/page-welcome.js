@@ -2,7 +2,7 @@
 
 import { api } from "./api.js";
 import { icon } from "./icons.js";
-import { esc } from "./ui.js";
+import { errorBanner, esc } from "./ui.js";
 import { mark } from "./shell.js";
 
 const $ = (s) => document.querySelector(s);
@@ -72,7 +72,7 @@ $("#test").addEventListener("click", async () => {
         : `<div class="banner banner-ok">Connected as ${esc(r.idType)}. It reaches ${r.tenantCount} tenants.</div>`;
     $("#to-3").disabled = false;
   } catch (err) {
-    out.innerHTML = `<div class="banner banner-err">${esc(err.message)}</div>`;
+    out.innerHTML = errorBanner("The credential didn't connect.", err.message);
   }
 });
 
@@ -90,16 +90,21 @@ $("#to-3").addEventListener("click", () => {
 $("#save").addEventListener("click", async () => {
   const btn = $("#save");
   btn.disabled = true;
+  // What was being saved when it failed, for the plain words in the banner.
+  let saving = "credential";
   try {
     const r = await api.put("/api/credentials", { mode: tested.mode, clientId: tested.clientId, clientSecret: tested.clientSecret, label: tested.label });
+    saving = "connect";
     if (r.status.status !== "configured-ok") throw new Error(r.status.error ?? "The credential was saved but didn't connect.");
+    saving = "intelix";
     const ix = new FormData($("#ix-form"));
     const ixId = String(ix.get("ixId") ?? "").trim();
     const ixSecret = String(ix.get("ixSecret") ?? "").trim();
     if (ixId && ixSecret) await api.put("/api/intelix", { clientId: ixId, clientSecret: ixSecret, region: String(ix.get("ixRegion") ?? "au") });
     window.location.href = "/";
   } catch (err) {
-    $("#review").insertAdjacentHTML("beforeend", `<div class="banner banner-err">${esc(err.message)}</div>`);
+    const plain = { credential: "Couldn't save the credential.", connect: "Saved, but the credential didn't connect.", intelix: "The credential is saved, but the Intelix credential couldn't be saved." }[saving];
+    $("#review").insertAdjacentHTML("beforeend", errorBanner(plain, err.message));
     btn.disabled = false;
   }
 });

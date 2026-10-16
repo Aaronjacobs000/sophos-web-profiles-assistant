@@ -101,7 +101,9 @@ export interface BuildStep {
 export interface Check {
   ok: boolean;
   level: "ok" | "warn" | "fail";
+  /** Plain words; what Sophos or the tool answered goes in detail, which the page shows on its own line. */
   text: string;
+  detail?: string;
 }
 
 export interface BuildRecord {
@@ -313,7 +315,7 @@ export async function dryRun(dataDir: string, ctx: TenantContext, pilotIn: Pilot
       if (old.length) checks.push({ ok: true, level: "warn", text: `${old.length} chosen devices can't use profiles yet (not Windows on 2026.1 or later); they fall back to the next policy.` });
     }
   } catch (err) {
-    checks.push({ ok: false, level: "fail", text: `Couldn't check the targets: ${err instanceof Error ? err.message : String(err)}` });
+    checks.push({ ok: false, level: "fail", text: "Couldn't check the targets.", detail: err instanceof Error ? err.message : String(err) });
   }
   if (!(tg.users?.length || tg.userGroups?.length || tg.endpoints?.length || tg.endpointGroups?.length)) {
     checks.push({ ok: true, level: "warn", text: "No pilot targets chosen: the policy is created unassigned. Assign it here later or in Sophos Fusion." });
@@ -385,7 +387,7 @@ export async function execute(
   record.snapshotFile = readiness.snapshot?.file;
   if (!record.snapshotFile) {
     record.status = "failed";
-    record.checks.push({ ok: false, level: "fail", text: `No rollback snapshot could be saved, so nothing was built. ${readiness.snapshotError ?? ""}`.trim() });
+    record.checks.push({ ok: false, level: "fail", text: "No rollback snapshot could be saved, so nothing was built.", ...(readiness.snapshotError ? { detail: readiness.snapshotError } : {}) });
     await saveRecord(dataDir, record);
     return record;
   }

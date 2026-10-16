@@ -3,7 +3,7 @@
 
 import { api } from "./api.js";
 import { getStatus, initShell } from "./shell.js";
-import { esc, escAttr } from "./ui.js";
+import { errorBanner, esc, escAttr } from "./ui.js";
 import { icon } from "./icons.js";
 import { toast } from "./toast.js";
 
@@ -185,7 +185,7 @@ async function load() {
   try {
     render(await api.get("/api/estate"));
   } catch (err) {
-    main.innerHTML = `<div class="banner banner-err">${esc(err.message)}</div>`;
+    main.innerHTML = errorBanner("Couldn't read the estate.", err.message);
   }
 }
 

@@ -26,7 +26,8 @@ const digestOf = (list, extra = {}) => ({ days: 7, since: null, pilotOnly: false
 /** The Pilot policy card's text, buttons and links. */
 const PILOT_CARD = `(() => { const c = [...document.querySelectorAll(".panel-card")].find((s) => s.querySelector("h2")?.textContent === "Pilot policy"); return { text: c.textContent.replace(/\\s+/g, " ").trim(), buttons: [...c.querySelectorAll("button")].map((b) => b.textContent.trim()), tag: c.querySelector(".card-head .tag")?.textContent }; })()`;
 
-test("the note on an unfinished rollback ends Sophos's reason with a full stop before the next sentence", { skip: skipBrowser, timeout: 60_000 }, async () => {
+// Since v0.3.17 the reason, often Sophos's answer, is on the note's Detail line rather than in its sentence.
+test("the note on an unfinished rollback says so plainly, with Sophos's reason on a Detail line ending in a full stop", { skip: skipBrowser, timeout: 60_000 }, async () => {
   const unfinished = { at: "2026-10-15T02:00:00.000Z", reason: "Sophos API error 500: InternalServerError", left: [{ kind: "policy", name: pilot.policyName }] };
   const view = { pilot: { ...pilot, buildStatus: "rollback-partial", rollbackUnfinished: unfinished }, policy, store, allows: [] };
   const { server, base } = await pageServer({ "/api/status": status, [`/api/pilot/${T}`]: () => view, [`/api/pilot/${T}/digest`]: digestOf([]) });
@@ -35,12 +36,15 @@ test("the note on an unfinished rollback ends Sophos's reason with a full stop b
     b = await openBrowser();
     const banner = async () => {
       await b.open(`${base}/pilot.html?tenant=${T}`, 1440, ".banner-warn");
-      return b.evaluate(`document.querySelector(".banner-warn").textContent.replace(/\\s+/g, " ").trim()`);
+      return b.evaluate(`(() => { const k = document.querySelector(".banner-warn").cloneNode(true); const d = k.querySelector("[data-error-detail]"); d?.remove(); return { text: k.textContent.replace(/\\s+/g, " ").trim(), detail: d?.textContent.trim() ?? null }; })()`);
     };
-    assert.equal(await banner(), `The rollback didn't finish. Still in the tenant: the policy "WF pilot: Example profile". Sophos API error 500: InternalServerError. Roll it back again from the Build page, or carry on with the pilot.`);
+    assert.deepEqual(await banner(), {
+      text: `The rollback didn't finish. Still in the tenant: the policy "WF pilot: Example profile". Roll it back again from the Build page, or carry on with the pilot.`,
+      detail: "Detail: Sophos API error 500: InternalServerError.",
+    });
     // A reason that already ends a sentence keeps its own stop.
     unfinished.reason = "Sophos API request got no answer within 30 s. A read-back still found it, so it wasn't deleted.";
-    assert.match(await banner(), /so it wasn't deleted\. Roll it back again/);
+    assert.equal((await banner()).detail, "Detail: Sophos API request got no answer within 30 s. A read-back still found it, so it wasn't deleted.");
   } finally {
     server.close();
     await b?.close();

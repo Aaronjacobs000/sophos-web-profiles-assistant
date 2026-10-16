@@ -89,6 +89,8 @@ const unwritten = new AsyncLocalStorage<Unwritten>();
 
 /** The response header that says a request's audit entries could not be written. */
 export const AUDIT_WARNING_HEADER = "X-Audit-Warning";
+/** The response header with the error codes behind that warning, which the pages show on the warning's detail line. */
+export const AUDIT_WARNING_DETAIL_HEADER = "X-Audit-Warning-Detail";
 
 /**
  * Audits a write Sophos has already answered. If the entry still can't be
@@ -117,11 +119,11 @@ export async function auditOrWarn(entry: Omit<AuditEntry, "id" | "ts">): Promise
   }
 }
 
-function warningText({ count, codes, locked }: Unwritten): string {
+function warningText({ count, locked }: Unwritten): string {
   const one = count === 1;
   return (
-    `${one ? "The audit entry for this change" : `${count} audit entries for these changes`} couldn't be written to data/audit.log ` +
-    `(${[...codes].join(", ")})${locked ? ", usually because OneDrive or antivirus held the file" : ""}. ` +
+    `${one ? "The audit entry for this change" : `${count} audit entries for these changes`} couldn't be written to data/audit.log` +
+    `${locked ? ", usually because OneDrive or antivirus held the file" : ""}. ` +
     `The ${one ? "change itself is" : "changes themselves are"} unaffected; the Logs page has the ${one ? "entry" : "entries"}.`
   );
 }
@@ -135,7 +137,10 @@ export function auditWarnings(_req: Request, res: Response, next: NextFunction):
   const pending: Unwritten = { count: 0, codes: new Set(), locked: false };
   const writeHead = res.writeHead as (...args: unknown[]) => Response;
   res.writeHead = function (this: Response, ...args: unknown[]) {
-    if (pending.count > 0) this.setHeader(AUDIT_WARNING_HEADER, warningText(pending));
+    if (pending.count > 0) {
+      this.setHeader(AUDIT_WARNING_HEADER, warningText(pending));
+      this.setHeader(AUDIT_WARNING_DETAIL_HEADER, [...pending.codes].join(", "));
+    }
     return writeHead.apply(this, args);
   } as typeof res.writeHead;
   unwritten.run(pending, next);

@@ -158,11 +158,11 @@ export async function startEstateScan(
   const started = Date.now();
   log.emit("info", SECTION, `Estate scan started: ${targets.length} tenants, ${concurrency} at a time.`);
 
-  void (async () => {
+  const scan = async () => {
     await mapPool(targets, concurrency, async (row) => {
-      row.status = "reading";
-      const info = pctx.tenants.find((t) => t.id === row.tenantId);
       try {
+        row.status = "reading";
+        const info = pctx.tenants.find((t) => t.id === row.tenantId);
         if (!info) throw new Error("This credential no longer reaches the tenant.");
         const result = await runReadiness(
           dataDir,
@@ -192,7 +192,20 @@ export async function startEstateScan(
       SECTION,
       `Estate scan finished: ${run.done} tenants in ${(run.durationMs / 1000).toFixed(0)} s, ${run.calls} reads, ${unreadable} unreadable, ${errors} errors.`,
     );
-  })();
+  };
+  // Each tenant's read handles its own failure. Anything else that fails ends the scan here, logged, instead of stopping the
+  // server, and the scan no longer counts as running, so the page stops waiting and a new scan can start.
+  void scan().catch(async (err) => {
+    run.running = false;
+    run.finishedAt ??= new Date().toISOString();
+    run.durationMs ??= Date.now() - started;
+    try {
+      log.emit("error", SECTION, `The estate scan stopped: ${err instanceof Error ? err.message : String(err)}`);
+      await persist(dataDir, run);
+    } catch {
+      // Logging or saving failed too: the scan is already marked as stopped in memory.
+    }
+  });
   return run;
 }
 

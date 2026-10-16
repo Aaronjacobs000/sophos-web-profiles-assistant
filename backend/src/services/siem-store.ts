@@ -254,7 +254,15 @@ export async function storeSummary(dataDir: string, tenantId: string): Promise<S
 export function startCollector(dataDir: string, hours: number, contextFor: (tenantId: string) => { client: TenantApi; tenantId: string }): void {
   if (!(hours > 0)) return;
   const tick = async () => {
-    for (const t of await enabledTenants(dataDir)) {
+    // A tenant's saved setting that can't be read or parsed skips this run, with a warning, instead of stopping the server.
+    let tenants: string[];
+    try {
+      tenants = await enabledTenants(dataDir);
+    } catch (err) {
+      log.emit("warn", SECTION, `No SIEM collection this time: the collection settings couldn't be read. ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+    for (const t of tenants) {
       try {
         const ctx = contextFor(t);
         const run = await collect(dataDir, ctx.client, ctx.tenantId);

@@ -4,7 +4,7 @@
 
 import { api } from "./api.js";
 import { currentTenantId, getStatus, initShell, setTenant } from "./shell.js";
-import { buildHeadline, esc, escAttr } from "./ui.js";
+import { buildHeadline, detailHtml, errorBanner, esc, escAttr } from "./ui.js";
 import { icon } from "./icons.js";
 import { toast } from "./toast.js";
 import { diffHtml } from "./diff-view.js";
@@ -41,14 +41,24 @@ function stepsHtml(rec) {
   return `<ol class="steps-list">${rec.steps
     .map(
       (s) => `<li><span class="s-n">${s.order}</span><div><div class="s-name">${esc(s.kind === "site-list" ? "Site list" : s.kind === "profile" ? "Profile" : "Policy")} "${esc(s.name)}"</div>
-        <div class="s-sum">${esc(s.summary)}${s.readBack ? `. Read back: ${esc(s.readBack)}` : ""}${s.note ? `. ${esc(s.note)}` : ""}${s.error ? `. ${esc(s.error)}` : ""}</div>
+        <div class="s-sum">${esc(s.summary)}${s.readBack ? `. Read back: ${esc(s.readBack)}` : ""}${s.note ? `. ${esc(s.note)}` : ""}</div>
+        ${s.error ? `<span class="err-note">This step failed, so the build stopped here.</span>${detailHtml(s.error)}` : ""}
         <div class="s-path">${s.method} ${esc(s.path)}${s.id ? `  ${esc(s.id)}` : ""}</div></div>${STATUS_TAG[s.status] ?? ""}</li>`,
     )
     .join("")}</ol>`;
 }
 
+// Builds saved before v0.3.17 kept what Sophos or the tool answered in the check's own words: the words stay, the answer goes on the Detail line.
+const CHECK_DETAIL = [/^(Couldn't check the targets): ([\s\S]+)$/, /^(No rollback snapshot could be saved, so nothing was built\.) ([\s\S]+)$/];
+
+function checkHtml(c) {
+  const m = c.detail ? null : CHECK_DETAIL.map((re) => re.exec(c.text)).find(Boolean);
+  const text = m ? `${m[1].replace(/\.$/, "")}.` : c.text;
+  return `<li class="${c.level}"><span>${esc(text)}${detailHtml(c.detail ?? m?.[2])}</span></li>`;
+}
+
 function checksHtml(rec) {
-  return `<ul class="check-list">${rec.checks.map((c) => `<li class="${c.level}">${esc(c.text)}</li>`).join("")}</ul>`;
+  return `<ul class="check-list">${rec.checks.map(checkHtml).join("")}</ul>`;
 }
 
 function render() {
@@ -174,7 +184,7 @@ async function start() {
     lastPlan = builds[0] ?? null;
     render();
   } catch (err) {
-    main.innerHTML = `<div class="banner banner-err">${esc(err.message)}</div>`;
+    main.innerHTML = errorBanner("Couldn't read the design and pilot targets.", err.message);
   }
 }
 

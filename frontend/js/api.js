@@ -20,9 +20,9 @@ async function request(method, path, body) {
   }
 
   const res = await fetch(path, init);
-  // Sophos answered a write, but its audit entry could not be written.
+  // Sophos answered a write, but its audit entry could not be written. The error codes go on the toast's detail line.
   const auditWarning = res.headers.get("X-Audit-Warning");
-  if (auditWarning) toast(auditWarning, "warn", 12000);
+  if (auditWarning) toast(auditWarning, "warn", 12000, res.headers.get("X-Audit-Warning-Detail") ?? "");
   const text = await res.text();
   let data = null;
   if (text) {

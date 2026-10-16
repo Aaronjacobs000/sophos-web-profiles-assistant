@@ -4,7 +4,7 @@
 
 import { api } from "./api.js";
 import { currentTenantId, getStatus, initShell, setTenant } from "./shell.js";
-import { esc, escAttr, relTime, rollbackUnfinishedBanner, sentence } from "./ui.js";
+import { esc, escAttr, readBackParts, relTime, rollbackUnfinishedBanner, sentence } from "./ui.js";
 import { icon } from "./icons.js";
 import { toast } from "./toast.js";
 
@@ -18,8 +18,9 @@ let pilotOnly = false;
 const n = (x) => Number(x ?? 0).toLocaleString("en-US");
 const when = (iso) => (iso ? new Date(iso).toLocaleString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "");
 const ALLOW_STATUS = { added: '<span class="tag tag-ok">Added</span>', undone: '<span class="tag tag-muted">Undone</span>', failed: '<span class="tag tag-bad">Failed</span>', "undo-failed": '<span class="tag tag-bad">Undo failed</span>' };
-// The plain line on an Allow entry that carries an error; what Sophos or the tool answered goes on the Detail line under it.
-const ALLOW_ERROR = { failed: "The Allow didn't finish.", "undo-failed": "The undo didn't finish. Undo again, or check the list in Sophos Fusion.", earlier: "An earlier undo didn't finish." };
+// The plain line on an Allow entry that failed; what Sophos or the tool answered goes on the Detail line under it. An entry
+// added or undone has nothing to fix, so an error left from an earlier undo that failed isn't shown on it.
+const ALLOW_ERROR = { failed: "The Allow didn't finish.", "undo-failed": "The undo didn't finish. Undo again, or check the list in Sophos Fusion." };
 
 function pilotCard() {
   const p = view.pilot;
@@ -72,7 +73,15 @@ function allowsCard() {
   const current = view.pilot ? view.allows.filter((a) => a.buildId === view.pilot.buildId) : view.allows;
   const earlier = view.allows.length - current.length;
   const rows = current
-    .map((a) => `<li><span class="o-name">${esc(a.site)}<span class="o-kind">${esc(a.listName || "")} · ${when(a.at)}${a.readBack ? ` · ${esc(a.readBack)}` : ""}</span>${a.error ? `<span class="o-note">${ALLOW_ERROR[a.status] ?? ALLOW_ERROR.earlier}</span><span class="o-detail" data-allow-detail>Detail: ${esc(sentence(a.error))}</span>` : ""}</span><span class="o-meta">${a.status === "added" && a.buildStatus === "rolled-back" ? '<span class="tag tag-muted">Removed with the build</span>' : `${ALLOW_STATUS[a.status] ?? ""}${["added", "undo-failed"].includes(a.status) ? ` <button class="btn btn-small" data-undo="${escAttr(a.id)}">Undo</button>` : ""}`}</span></li>`)
+    .map((a) => {
+      // A read-back that couldn't read the list says "not read" in the sub-line; why goes on the Detail line, with the error of an entry that failed.
+      const back = readBackParts(a.readBack);
+      const failed = ALLOW_ERROR[a.status] && a.error;
+      const detail = [back.detail, failed ? a.error : ""].filter(Boolean).map(sentence).join(" ");
+      // An Allow that failed before it had a list has no list name, so the sub-line starts with the date.
+      const sub = [esc(a.listName || ""), when(a.at), esc(back.plain)].filter(Boolean).join(" · ");
+      return `<li><span class="o-name">${esc(a.site)}<span class="o-kind">${sub}</span>${failed ? `<span class="o-note">${ALLOW_ERROR[a.status]}</span>` : ""}${detail ? `<span class="o-detail" data-allow-detail>Detail: ${esc(detail)}</span>` : ""}</span><span class="o-meta">${a.status === "added" && a.buildStatus === "rolled-back" ? '<span class="tag tag-muted">Removed with the build</span>' : `${ALLOW_STATUS[a.status] ?? ""}${["added", "undo-failed"].includes(a.status) ? ` <button class="btn btn-small" data-undo="${escAttr(a.id)}">Undo</button>` : ""}`}</span></li>`;
+    })
     .join("");
   return `<section class="panel-card"><h2>Allow entries</h2>${rows ? `<ul class="order-list">${rows}</ul>` : '<p class="muted">None yet. Allow a host from the sites table.</p>'}${earlier ? `<p class="hint">${earlier} more ${earlier === 1 ? "entry belongs" : "entries belong"} to earlier builds.</p>` : ""}</section>`;
 }
@@ -255,7 +264,8 @@ function allowModal(plan) {
     try {
       const r = await api.post(`/api/pilot/${encodeURIComponent(tenantId)}/allow`, { host: plan.host, dryRun: false });
       close();
-      toast(`Allowed ${r.entry.site}: ${r.entry.readBack}.`, "ok", 9000);
+      const back = readBackParts(r.entry.readBack);
+      toast(`Allowed ${r.entry.site}: ${back.plain}.`, "ok", 9000, back.detail);
       await reread();
     } catch (err) {
       toast(`Couldn't allow ${plan.site ?? plan.host}.`, "warn", 10000, err.message);

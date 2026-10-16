@@ -4,7 +4,7 @@
 
 import { api } from "./api.js";
 import { currentTenantId, getStatus, initShell, setTenant } from "./shell.js";
-import { esc, escAttr, plural, retireStatus, retireStepStatus, rollbackUnfinishedBanner, sentence } from "./ui.js";
+import { detailHtml, esc, escAttr, plural, readBackParts, retireStatus, retireStepStatus, rollbackUnfinishedBanner, sentence } from "./ui.js";
 import { icon } from "./icons.js";
 import { toast } from "./toast.js";
 import { diffHtml } from "./diff-view.js";
@@ -22,6 +22,8 @@ const n = (x) => Number(x ?? 0).toLocaleString("en-US");
 const when = (iso) => (iso ? new Date(iso).toLocaleString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "");
 const REASON = { "windows-old-agent": "Windows below 2026.1", "windows-no-agent-version": "no agent version", macos: "macOS", other: "other platform", server: "server: needs a server Web Control policy", computer: "computer: needs a Web Control policy" };
 const WAVE_STATUS = { moved: '<span class="tag tag-ok">Moved</span>', undone: '<span class="tag tag-muted">Undone</span>', failed: '<span class="tag tag-bad">Failed</span>', "undo-failed": '<span class="tag tag-bad">Undo failed</span>' };
+// The plain line on a wave that failed; what Sophos or the tool answered goes on the Detail line under it. Any other status has nothing to fix.
+const WAVE_ERROR = { failed: "The move didn't finish.", "undo-failed": "The undo didn't finish. Undo again, or check the pilot in Sophos Fusion." };
 const RETIRE_STATUS = { retired: "tag-ok", restored: "tag-muted", partial: "tag-warn", "restore-partial": "tag-warn", failed: "tag-bad" };
 
 function pilotCard() {
@@ -77,8 +79,14 @@ function historyCard() {
   const off = (w) => !!why && w.policyId === promo.pilot?.policyId;
   const undoable = promo.waves.filter((w) => ["moved", "undo-failed"].includes(w.status));
   const rows = promo.waves
-    .map((w) => `<li><div><div class="w-name">${when(w.at)}: ${n(w.devices.length)} ${w.devices.length === 1 ? "device" : "devices"}</div><div class="w-devs">${esc(w.devices.map((d) => d.hostname).join(", "))}${w.readBack ? `. Read back: ${esc(w.readBack)}` : ""}${w.error ? `. ${esc(w.error)}` : ""}</div></div>
-      <span>${WAVE_STATUS[w.status] ?? ""}${undoable.includes(w) ? ` <button class="btn btn-small" data-undo-wave="${escAttr(w.id)}"${off(w) ? ` disabled title="${escAttr(why)}"` : ""}>Undo</button>` : ""}</span></li>`)
+    .map((w) => {
+      // A read-back that couldn't read the policy says "not read" here; why goes on the Detail line, with the error of a wave that failed.
+      const back = readBackParts(w.readBack);
+      const failed = WAVE_ERROR[w.status] && w.error;
+      const detail = [back.detail, failed ? w.error : ""].filter(Boolean).map(sentence).join(" ");
+      return `<li><div><div class="w-name">${when(w.at)}: ${n(w.devices.length)} ${w.devices.length === 1 ? "device" : "devices"}</div><div class="w-devs">${esc(w.devices.map((d) => d.hostname).join(", "))}${back.plain ? `. Read back: ${esc(back.plain)}` : ""}</div>${failed ? `<span class="err-note">${WAVE_ERROR[w.status]}</span>` : ""}${detailHtml(detail)}</div>
+      <span>${WAVE_STATUS[w.status] ?? ""}${undoable.includes(w) ? ` <button class="btn btn-small" data-undo-wave="${escAttr(w.id)}"${off(w) ? ` disabled title="${escAttr(why)}"` : ""}>Undo</button>` : ""}</span></li>`;
+    })
     .join("");
   return `<section class="panel-card"><h2>Waves moved</h2>${undoable.some(off) ? `<p class="hint" data-undo-off>${esc(why)}</p>` : ""}${rows ? `<ul class="wave-list">${rows}</ul>` : '<p class="muted">None yet.</p>'}</section>`;
 }
@@ -153,6 +161,36 @@ async function refresh() {
   render();
 }
 
+/**
+ * Reads the page again after a change on it. When the read fails, the page
+ * keeps what it showed, says so above it in plain words and offers a retry;
+ * the error itself goes on a separate detail line.
+ */
+async function reread() {
+  try {
+    await refresh();
+  } catch (err) {
+    // The last read, drawn again so every button is as it was.
+    render();
+    main.querySelector(".page-head").insertAdjacentHTML(
+      "afterend",
+      `<section class="panel-card" style="margin-bottom:18px" data-reread-failed><h2>Couldn't read the tenant</h2>
+        <p style="margin:0 0 10px">The tool couldn't read the pilot, the devices or Website Management, so the page still shows what it read before. Retry, or check the tenant in Sophos Fusion.</p>
+        <p class="hint" style="margin:0 0 10px;overflow-wrap:anywhere" data-unread-detail>Detail: ${esc(sentence(err.message))}</p>
+        <div class="head-actions"><button class="btn btn-small" data-reread>Retry</button></div></section>`,
+    );
+    // Into view from wherever the change was made, clear of the sticky top bar (taller when it wraps at phone width).
+    const note = main.querySelector("[data-reread-failed]");
+    note.style.scrollMarginTop = `${(document.querySelector(".topbar")?.getBoundingClientRect().height ?? 0) + 12}px`;
+    note.scrollIntoView({ block: "nearest" });
+    note.querySelector("[data-reread]").addEventListener("click", async (e) => {
+      e.currentTarget.disabled = true;
+      e.currentTarget.innerHTML = '<span class="spinner"></span>Reading';
+      await reread();
+    });
+  }
+}
+
 /** Reads the page. When a read fails, the page says so in plain words and offers a retry; Sophos's answer stays out of the main text. */
 async function load() {
   try {
@@ -182,7 +220,7 @@ function wire() {
   wireRetry();
   main.querySelector("#wavesize")?.addEventListener("change", async (e) => {
     waveSize = Math.max(1, Number(e.target.value) || 25);
-    await refresh();
+    await reread();
   });
   main.querySelector("#toggle")?.addEventListener("click", async () => {
     const on = !promo.policy.enabled;
@@ -193,7 +231,7 @@ function wire() {
     } catch (err) {
       toast(`Couldn't turn the pilot ${on ? "on" : "off"}.`, "warn", 9000, err.message);
     }
-    await refresh();
+    await reread();
   });
   main.querySelectorAll("[data-wave]").forEach((b) =>
     b.addEventListener("click", async () => {
@@ -214,7 +252,7 @@ function wire() {
       } catch (err) {
         toast(`Couldn't move wave ${wave.n}.`, "warn", 9000, err.message);
       }
-      await refresh();
+      await reread();
     }),
   );
   main.querySelectorAll("[data-undo-wave]").forEach((b) =>
@@ -227,7 +265,7 @@ function wire() {
       } catch (err) {
         toast("Couldn't undo the wave.", "warn", 9000, err.message);
       }
-      await refresh();
+      await reread();
     }),
   );
   main.querySelectorAll('input[name="tag"]').forEach((c) =>
@@ -258,7 +296,7 @@ function wire() {
     } catch (err) {
       toast("Couldn't retire the tags.", "warn", 10000, err.message);
     }
-    await refresh();
+    await reread();
   });
   main.querySelectorAll("[data-restore]").forEach((b) =>
     b.addEventListener("click", async () => {
@@ -271,7 +309,7 @@ function wire() {
       } catch (err) {
         toast("Couldn't restore the tags.", "warn", 10000, err.message);
       }
-      await refresh();
+      await reread();
     }),
   );
   main.querySelectorAll("[data-diff]").forEach((b) =>

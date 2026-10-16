@@ -277,6 +277,8 @@ export async function undoWave(dataDir: string, ctx: TenantContext, waveId: stri
     wave.status = "undone";
     wave.undoneAt = new Date().toISOString();
     wave.readBack = "assignment back as before the wave";
+    // An earlier undo that failed is over now: the wave no longer carries its error (the audit log keeps both).
+    delete wave.error;
   } catch (err) {
     wave.status = "undo-failed";
     wave.error = err instanceof Error ? err.message : String(err);

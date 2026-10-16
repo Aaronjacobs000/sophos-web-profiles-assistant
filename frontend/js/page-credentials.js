@@ -2,7 +2,7 @@
 
 import { api } from "./api.js";
 import { initShell } from "./shell.js";
-import { esc } from "./ui.js";
+import { errorBanner, esc } from "./ui.js";
 import { icon } from "./icons.js";
 import { toast } from "./toast.js";
 
@@ -36,7 +36,7 @@ async function render() {
   main.innerHTML = `
     <section class="page-head"><div><span class="eyebrow">Settings</span><h1>Credentials</h1>
       <p class="page-lead">The tool uses one credential at a time. Secrets stay in .env on this computer and are never shown in full.</p></div></section>
-    ${status?.status === "configured-invalid" ? `<div class="banner banner-err" style="margin-bottom:16px">The saved credential didn't connect: ${esc(status.error ?? "")}</div>` : ""}
+    ${status?.status === "configured-invalid" ? errorBanner("The saved credential didn't connect.", status.error, "err", "margin-bottom:16px") : ""}
     <div class="split-row" style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
       ${card("Tenant credential", v.tenant, "tenant", v.mode === "tenant" && status?.status === "configured-ok")}
       ${card("Partner or organization credential", v.partner, "partner", v.mode === "partner" && status?.status === "configured-ok")}
@@ -72,7 +72,7 @@ async function render() {
       const r = await api.post("/api/credentials/test", values());
       out.innerHTML = `<div class="banner banner-ok">${r.idType === "tenant" ? `Connected to tenant <code>${esc(r.tenant.tenantId)}</code>.` : `Connected as ${esc(r.idType)}, ${r.tenantCount} tenants.`}</div>`;
     } catch (err) {
-      out.innerHTML = `<div class="banner banner-err">${esc(err.message)}</div>`;
+      out.innerHTML = errorBanner("The credential didn't connect.", err.message);
     }
   });
   main.querySelector("#save").addEventListener("click", async () => {
@@ -87,10 +87,10 @@ async function render() {
         toast("Saved and connected.", "ok");
         window.location.href = "/";
       } else {
-        main.querySelector("#out").innerHTML = `<div class="banner banner-err">${esc(r.status.error ?? "Saved, but it didn't connect.")}</div>`;
+        main.querySelector("#out").innerHTML = errorBanner("Saved, but the credential didn't connect.", r.status.error);
       }
     } catch (err) {
-      main.querySelector("#out").innerHTML = `<div class="banner banner-err">${esc(err.message)}</div>`;
+      main.querySelector("#out").innerHTML = errorBanner("Couldn't save the credential.", err.message);
     }
   });
 }
@@ -108,7 +108,7 @@ function wireIntelix() {
       const r = await api.post("/api/intelix/test", vals());
       out.innerHTML = `<div class="banner banner-ok">${esc(r.message)}</div>`;
     } catch (err) {
-      out.innerHTML = `<div class="banner banner-err">${esc(err.message)}</div>`;
+      out.innerHTML = errorBanner("Intelix didn't issue a token.", err.message);
     }
   });
   main.querySelector("#ix-save").addEventListener("click", async () => {
@@ -117,11 +117,20 @@ function wireIntelix() {
     try {
       await api.put("/api/intelix", v);
       toast("Intelix credential saved.", "ok");
-      render().then(wireIntelix);
+      show();
     } catch (err) {
-      main.querySelector("#ix-out").innerHTML = `<div class="banner banner-err">${esc(err.message)}</div>`;
+      main.querySelector("#ix-out").innerHTML = errorBanner("Couldn't save the Intelix credential.", err.message);
     }
   });
 }
 
-render().then(wireIntelix);
+/** Draws the page. When the saved credentials can't be read, the page says so in plain words. */
+function show() {
+  render()
+    .then(wireIntelix)
+    .catch((err) => {
+      main.innerHTML = errorBanner("Couldn't read the saved credentials.", err.message);
+    });
+}
+
+show();

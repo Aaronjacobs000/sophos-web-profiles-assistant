@@ -210,7 +210,8 @@ test("Allow entries rows say a failure plainly, with the raw answer on a separat
         [
           { site: "chat.example.org", note: "The Allow didn't finish.", detail: DETAIL(RAW), inside: true },
           { site: "app.example.com", note: "The undo didn't finish. Undo again, or check the list in Sophos Fusion.", detail: DETAIL("Sophos API error 500: InternalServerError"), inside: true },
-          { site: "video.example.net", note: "An earlier undo didn't finish.", detail: DETAIL(UNREAD), inside: true },
+          // Undone after an earlier undo failed: nothing left to fix, so no note (v0.3.17).
+          { site: "video.example.net", note: null, detail: null, inside: true },
           { site: "files.example.com", note: null, detail: null, inside: true },
         ],
         `${width} px`,

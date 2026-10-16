@@ -2,7 +2,7 @@
 
 import { api } from "./api.js";
 import { initShell } from "./shell.js";
-import { esc } from "./ui.js";
+import { errorBanner, esc } from "./ui.js";
 
 const main = document.getElementById("main");
 
@@ -30,5 +30,5 @@ async function render() {
 }
 
 render().catch((err) => {
-  main.innerHTML = `<div class="banner banner-err">${esc(err.message)}</div>`;
+  main.innerHTML = errorBanner("Couldn't read the logs.", err.message);
 });

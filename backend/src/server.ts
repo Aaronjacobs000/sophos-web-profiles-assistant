@@ -7,6 +7,7 @@ import dotenv from "dotenv";
 import { initState } from "./state.js";
 import { log } from "./log.js";
 import { errorHandler } from "./middleware/error-handler.js";
+import { catchRouteRejections } from "./middleware/async-routes.js";
 import { localHostOnly, noFraming, ownPagesOnly } from "./middleware/local-host.js";
 import { allowedClientsOnly } from "./middleware/client-ip.js";
 import { addressUrl, listenErrorMessage, networkSettings, type NetworkSettings } from "./config/network.js";
@@ -35,6 +36,10 @@ export const DEFAULT_PORT = 3110;
 dotenv.config({ path: storagePaths(REPO_ROOT).envPath, quiet: true });
 // READ_ONLY=1: refuse every write to Sophos before it leaves this computer.
 if (readOnlyMode()) installFetchGuard();
+// Every route, timer and background job handles its own failures. One that slips through is logged, and the server keeps running.
+process.on("unhandledRejection", (reason) => {
+  log.error("Unhandled error; the server keeps running:", reason instanceof Error ? reason : String(reason));
+});
 
 function readNetworkSettings(): NetworkSettings {
   try {
@@ -84,13 +89,10 @@ async function main() {
   app.use(express.json({ limit: "3mb" }));
   app.use(auditWarnings);
 
-  app.use("/api", statusRouter);
-  app.use("/api", credentialsRouter);
-  app.use("/api", logsRouter);
-  app.use("/api", estateRouter);
-  app.use("/api", readinessRouter);
-  app.use("/api", convertRouter);
-  app.use("/api", pilotRouter);
+  // A route whose awaited work fails answers with a JSON error rather than leaving the error unhandled.
+  for (const router of [statusRouter, credentialsRouter, logsRouter, estateRouter, readinessRouter, convertRouter, pilotRouter]) {
+    app.use("/api", catchRouteRejections(router));
+  }
   app.use("/api", (_req, res) => {
     res.status(404).json({ error: "not_found" });
   });

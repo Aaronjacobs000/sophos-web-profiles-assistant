@@ -405,6 +405,8 @@ export async function undoAllow(dataDir: string, ctx: TenantContext, allowId: st
     }
     entry.status = "undone";
     entry.undoneAt = new Date().toISOString();
+    // An earlier undo that failed is over now: the entry no longer carries its error (the audit log keeps both).
+    delete entry.error;
   } catch (err) {
     entry.status = "undo-failed";
     entry.error = err instanceof Error ? err.message : String(err);

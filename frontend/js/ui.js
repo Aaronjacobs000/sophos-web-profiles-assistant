@@ -58,6 +58,27 @@ export function sentence(text) {
   return !t || /[.!?]$/.test(t) ? t : `${t}.`;
 }
 
+/**
+ * What Sophos or the tool answered, on its own Detail line under a plain
+ * message, so the message itself stays plain. Empty when there's no answer.
+ */
+export function detailHtml(raw) {
+  const t = sentence(raw);
+  return t ? `<span class="err-detail" data-error-detail>Detail: ${esc(t)}</span>` : "";
+}
+
+/** A banner that says plainly what went wrong, with what Sophos or the tool answered on a Detail line in it. */
+export function errorBanner(plain, raw, variant = "err", style = "") {
+  return `<div class="banner banner-${variant}"${style ? ` style="${style}"` : ""}>${esc(plain)}${detailHtml(raw)}</div>`;
+}
+
+/** A read-back as recorded ("site listed", or "not read: " and why), split into its plain words and the answer for a Detail line. */
+export function readBackParts(text) {
+  const t = String(text ?? "");
+  const m = /^not read: ([\s\S]+)$/.exec(t);
+  return m ? { plain: "not read", detail: m[1] } : { plain: t, detail: "" };
+}
+
 /** The note on a pilot whose rollback didn't finish: what it left in the tenant, why, and what to do next. */
 export function rollbackUnfinishedBanner(pilot, tenantId) {
   const r = pilot?.rollbackUnfinished;
@@ -66,10 +87,9 @@ export function rollbackUnfinishedBanner(pilot, tenantId) {
   const lists = r.left.filter((s) => s.kind === "site-list").length;
   const parts = [...named, ...(lists ? [plural(lists, "site list")] : [])];
   const left = parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}` : parts[0] ?? "the pilot";
-  const reason = sentence(r.reason);
-  // The reason can hold a long URL with an id, so it wraps anywhere.
-  return `<div class="banner banner-warn" style="overflow-wrap:anywhere;margin-bottom:10px"><strong>The rollback didn't finish.</strong> Still in the tenant: ${esc(left)}.${reason ? ` ${esc(reason)}` : ""}
-    Roll it back again from the <a href="/build.html?tenant=${encodeURIComponent(tenantId)}">Build</a> page, or carry on with the pilot.</div>`;
+  // Why it didn't finish, often what Sophos answered, goes on the Detail line. It can hold a long URL with an id, so it wraps anywhere.
+  return `<div class="banner banner-warn" style="overflow-wrap:anywhere;margin-bottom:10px"><strong>The rollback didn't finish.</strong> Still in the tenant: ${esc(left)}.
+    Roll it back again from the <a href="/build.html?tenant=${encodeURIComponent(tenantId)}">Build</a> page, or carry on with the pilot.${detailHtml(r.reason)}</div>`;
 }
 
 /** A retire record's status in plain words, for the Retired table and the messages after a retire or restore. */

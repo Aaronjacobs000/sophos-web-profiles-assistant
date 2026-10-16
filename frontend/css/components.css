@@ -482,6 +482,10 @@ input:disabled { cursor: not-allowed; opacity: 0.5; }
 .banner-ok { background: var(--ok-soft); border-color: var(--ok-line); color: #c8f5d8; }
 .banner-err, .error-box { background: var(--bad-soft); border-color: var(--bad-line); color: #ffd0d5; }
 .banner-warn { background: var(--warn-soft); border-color: var(--warn-line); color: #ffe6b8; }
+/* What Sophos or the tool answered, on its own line under a plain message (a row, a note or a banner). */
+.err-note { display: block; margin-top: 4px; font-size: 12px; color: var(--ink-2); font-weight: 400; }
+.err-detail { display: block; margin-top: 2px; font-size: 12px; color: var(--ink-3); font-weight: 400; overflow-wrap: anywhere; }
+.banner .err-detail { margin-top: 4px; color: inherit; opacity: 0.8; }
 
 /* ================= floating selection bar ================= */
 .selection-basket {

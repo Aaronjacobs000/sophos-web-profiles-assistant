@@ -3,7 +3,7 @@
 // table with filters, and per-entry decisions.
 
 import { api } from "./api.js";
-import { esc, escAttr } from "./ui.js";
+import { detailHtml, esc, escAttr } from "./ui.js";
 import { icon } from "./icons.js";
 import { toast } from "./toast.js";
 
@@ -50,6 +50,13 @@ export function listsHtml(view, base) {
 let filter = "all";
 let query = "";
 
+/** Why, in plain words. A lookup that failed puts what Intelix answered in the reason; that answer goes on the Detail line. */
+function whyHtml(r) {
+  if (r.decided) return esc("Your decision.");
+  const raw = r.lookupError && r.reason.includes(`(${r.lookupError})`) ? r.lookupError : "";
+  return `${esc(raw ? r.reason.replace(`(${raw})`, "(the lookup failed)") : r.reason)}${detailHtml(raw)}`;
+}
+
 function rowHtml(r) {
   const verdict = r.decided?.verdict ?? r.verdict;
   const action = r.decided?.action ?? r.action;
@@ -62,7 +69,7 @@ function rowHtml(r) {
     <td>${risk ? `<span class="${risk === "HIGH" ? "off" : ""}">${esc(risk)}</span>` : '<span class="muted">none</span>'}</td>
     <td>${r.dns ? esc(r.dns.status) : '<span class="muted">not checked</span>'}</td>
     <td>${VERDICT_TAG[verdict]}${r.needsDecision && !r.decided ? ' <span class="tag tag-warn">Decide</span>' : ""}</td>
-    <td class="cu-why">${esc(r.decided ? "Your decision." : r.reason)}</td>
+    <td class="cu-why">${whyHtml(r)}</td>
     <td><select class="cu-decision" aria-label="Decision">
       <option value="">${r.decided ? "Undo decision" : "Keep"}</option>
       <option value="covered"${r.decided?.verdict === "covered" ? " selected" : ""}>Covered</option>

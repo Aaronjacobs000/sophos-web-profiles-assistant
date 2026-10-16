@@ -43,6 +43,8 @@ export async function openBrowser() {
   const stop = async () => {
     if (child.exitCode === null) child.kill();
     await exited;
+    // The browser's helper processes can hold its stderr open for a while after it exits; the test doesn't wait for them.
+    child.stderr.destroy();
     rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   };
   const portFile = path.join(profile, "DevToolsActivePort");
