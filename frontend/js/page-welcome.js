@@ -104,7 +104,8 @@ $("#save").addEventListener("click", async () => {
     window.location.href = "/";
   } catch (err) {
     const plain = { credential: "Couldn't save the credential.", connect: "Saved, but the credential didn't connect.", intelix: "The credential is saved, but the Intelix credential couldn't be saved." }[saving];
-    $("#review").insertAdjacentHTML("beforeend", errorBanner(plain, err.message));
+    // Saved but not connected isn't red: the save worked and the check after it didn't confirm the credential.
+    $("#review").insertAdjacentHTML("beforeend", errorBanner(plain, err.message, saving === "connect" ? "warn" : "err"));
     btn.disabled = false;
   }
 });

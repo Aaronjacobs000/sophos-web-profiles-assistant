@@ -181,10 +181,10 @@ export async function startEstateScan(
       run.done++;
       if (run.done % 10 === 0) await persist(dataDir, run);
     });
-    run.running = false;
     run.finishedAt = new Date().toISOString();
     run.durationMs = Date.now() - started;
-    await persist(dataDir, run);
+    // Saved as ended; the run in memory still counts as running until the save has settled (below).
+    await persist(dataDir, { ...run, running: false });
     const errors = run.rows.filter((r) => r.status === "error").length;
     const unreadable = run.rows.filter((r) => r.verdict === "unreadable").length;
     log.emit(
@@ -194,18 +194,22 @@ export async function startEstateScan(
     );
   };
   // Each tenant's read handles its own failure. Anything else that fails ends the scan here, logged, instead of stopping the
-  // server, and the scan no longer counts as running, so the page stops waiting and a new scan can start.
-  void scan().catch(async (err) => {
-    run.running = false;
-    run.finishedAt ??= new Date().toISOString();
-    run.durationMs ??= Date.now() - started;
-    try {
-      log.emit("error", SECTION, `The estate scan stopped: ${err instanceof Error ? err.message : String(err)}`);
-      await persist(dataDir, run);
-    } catch {
-      // Logging or saving failed too: the scan is already marked as stopped in memory.
-    }
-  });
+  // server. The scan stops counting as running only once every save has settled, so nothing is still writing in the data
+  // folder when the page, a new scan or a test sees it ended.
+  void scan()
+    .catch(async (err) => {
+      run.finishedAt ??= new Date().toISOString();
+      run.durationMs ??= Date.now() - started;
+      try {
+        log.emit("error", SECTION, `The estate scan stopped: ${err instanceof Error ? err.message : String(err)}`);
+        await persist(dataDir, { ...run, running: false });
+      } catch {
+        // Logging or saving failed too: the scan still ends below.
+      }
+    })
+    .finally(() => {
+      run.running = false;
+    });
   return run;
 }
 

@@ -158,8 +158,20 @@ function snapshotHtml(tenantId, r) {
   if (!r.snapshot) {
     return `<section class="panel-card snapshot-bar"><p><strong>No rollback snapshot.</strong> ${r.snapshotError ? "It couldn't be saved." : "The tenant couldn't be read."}${detailHtml(r.snapshotError)}</p><div class="head-actions">${report}</div></section>`;
   }
+  // What the snapshot holds, counting only the sections that were read: one that couldn't be read is stored as empty, not as none.
+  const unread = new Set(r.scorecard.unread.map((u) => u.section));
+  const held = [
+    unread.has("webControlPolicies") ? "" : plural(counts.policies.length, "Web Control policy", "Web Control policies"),
+    wm === undefined ? "" : plural(wm, "Website Management entry", "Website Management entries"),
+    unread.has("threatProtectionPolicies") ? "" : plural(counts.decryption.length, "Threat Protection policy", "Threat Protection policies"),
+    unread.has("profiles") && unread.has("siteLists") ? "" : unread.has("profiles") ? "every site list" : unread.has("siteLists") ? "every profile" : "every profile and site list",
+  ].filter(Boolean);
+  const holds = held.length > 2 ? `${held.slice(0, -1).join(", ")}, and ${held[held.length - 1]}` : held.join(" and ");
+  // Only the sections a snapshot holds: devices, categories and groups aren't in it either way.
+  const HELD = ["webControlPolicies", "serverWebControlPolicies", "threatProtectionPolicies", "serverThreatProtectionPolicies", "localSites", "tlsDecryption", "scanningExclusions", "profiles", "siteLists"];
+  const missing = r.scorecard.unread.filter((u) => HELD.includes(u.section)).map((u) => u.label);
   return `<section class="panel-card snapshot-bar">
-    <p><strong>Rollback snapshot saved.</strong> ${plural(counts.policies.length, "Web Control policy", "Web Control policies")}, ${wm === undefined ? "" : `${plural(wm, "Website Management entry", "Website Management entries")}, `}${plural(counts.decryption.length, "Threat Protection policy", "Threat Protection policies")}, and every profile and site list, as read.<br /><code>${esc(r.snapshot.file)}</code></p>
+    <p><strong>Rollback snapshot saved.</strong> ${holds ? `${esc(holds.charAt(0).toUpperCase() + holds.slice(1))}, as read.` : ""}${missing.length ? ` It doesn't hold what couldn't be read: ${esc(missing.join(", "))}.` : ""}<br /><code>${esc(r.snapshot.file)}</code></p>
     <div class="head-actions">
       <a class="btn" href="/api/snapshots/${encodeURIComponent(tenantId)}/${encodeURIComponent(r.snapshot.file)}">${icon("download")}Download snapshot</a>
       ${report}
@@ -249,9 +261,9 @@ async function run(tenant) {
   try {
     const r = await api.post(`/api/readiness/${encodeURIComponent(tenant.id)}/run`, {});
     render(r.tenant, r.result);
-    // Says what happened to the snapshot: saved, not saved (with why on the Detail line), or not taken because nothing could be read.
+    // Says what happened to the snapshot: saved, not saved (a write that failed, with why on the Detail line), or not taken because nothing could be read.
     if (r.result.snapshot) toast("Check finished. Snapshot saved.", "ok");
-    else if (r.result.snapshotError) toast("Check finished, but the rollback snapshot couldn't be saved.", "warn", 9000, r.result.snapshotError);
+    else if (r.result.snapshotError) toast("Check finished, but the rollback snapshot couldn't be saved.", "err", 9000, r.result.snapshotError);
     else toast("Check finished, but the tenant couldn't be read, so no snapshot was saved.", "warn", 9000);
   } catch (err) {
     renderEmpty(tenant, false);

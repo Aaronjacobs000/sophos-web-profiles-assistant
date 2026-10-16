@@ -10,6 +10,11 @@
 // answer in the answer's fields (a snapshot that couldn't be saved, a site
 // list that failed, an Allow whose list couldn't be read back, the builds
 // list unread after a build), and the customer report is read the same way.
+// From v0.3.19 the answers include every write whose read-back couldn't read
+// (a wave recorded as moved with a read-back that wasn't read, which v0.3.18
+// drew as "Wave moved. Read back: ..." with the raw answer in it, the pilot
+// switch, a wave undo, a rollback, the clean-up's lists, a retire and a
+// restore), and the records carry the raw answer in every read-back field.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -42,22 +47,23 @@ const ev = (n, url) => ({ id: `e${n}`, type: "Event::Endpoint::WebControlViolati
 const digest = { days: 7, since: null, pilotOnly: false, pilotDevices: null, imported: 0, otherWebEvents: 0, ...summarize([ev(1, "https://app.example.com/"), ev(2, "https://chat.example.org/")]) };
 const allow = (n, s, extra) => ({ id: id(n), at: now, host: `h${n}.example.com`, site: `h${n}.example.com`, buildId: "b1", profileId: "pr1", listName: "Example allows", createdList: true, status: s, buildStatus: "built", ...extra });
 const store = { days: [], total: 0, imported: 0, state: { tenantId: T, enabled: true, runs: [{ at: now, source: "api", ok: false, pages: 0, fetched: 0, web: 0, added: 0, error: RAW }] } };
-const pilotView = { pilot, policy, store, allows: [allow(1, "failed", { listName: "", error: RAW }), allow(2, "undo-failed", { error: RAW }), allow(3, "undone", { error: RAW }), allow(4, "added", { readBack: `not read: ${RAW}` })] };
+const pilotView = { pilot, policy, store, allows: [allow(1, "failed", { listName: "", error: RAW }), allow(2, "undo-failed", { error: RAW }), allow(3, "undone", { error: RAW }), allow(4, "added", { readBack: `not read: ${RAW}` }), allow(5, "undo-failed", { readBack: "site listed", undoReadBack: `not read: ${RAW}`, error: "The list couldn't be read back, so the removal isn't confirmed." }), allow(6, "added", { readBack: `not read: ${RAW}; profile links it as allow` })] };
 const wave = (n, s, extra) => ({ id: id(n), at: now, buildId: "b1", policyId: "p1", devices: [{ id: `w${n}`, hostname: `EXAMPLE-PC-0${n}` }], status: s, ...extra });
 const promo = {
   pilot,
   policy: { id: "p1", name: pilot.policyName, enabled: false, priority: 1, type: "web-control", endpoints: 1, endpointGroups: 0, users: 0, userGroups: 0 },
   mode: "devices",
   plan: { waves: [{ n: 1, devices: [{ id: "w9", hostname: "EXAMPLE-PC-09", group: "No group" }] }], inPilot: [{ id: "w1" }], notEligible: [] },
-  waves: [wave(1, "failed", { error: RAW, readBack: `not read: ${RAW}` }), wave(2, "undo-failed", { error: RAW }), wave(3, "undone", { error: RAW }), wave(4, "moved", { readBack: `not read: ${RAW}` })],
+  waves: [wave(1, "failed", { error: RAW, readBack: `not read: ${RAW}` }), wave(2, "undo-failed", { error: RAW }), wave(3, "undone", { error: RAW }), wave(4, "moved", { readBack: `not read: ${RAW}` }), wave(5, "undo-failed", { readBack: "assignment matches", undoReadBack: `not read: ${RAW}`, error: "The tool couldn't read the pilot policy back, so the undo isn't confirmed." })],
   waveSize: 25,
 };
-const retire = { tags: [{ tag: "Example tag", entries: 1, only: 1, policies: [] }], records: [{ id: id(5), tenantId: T, at: now, tags: ["Example tag"], snapshotFile: "example-tenant_20261016-010000.json", status: "partial", steps: [{ op: "delete-entry", url: "blocked.example.com", tags: ["Example tag"], status: "failed", error: RAW }], warnings: [] }] };
+const retireStep = (extra) => ({ op: "delete-entry", url: "blocked.example.com", tags: ["Example tag"], ...extra });
+const retire = { tags: [{ tag: "Example tag", entries: 1, only: 1, policies: [] }], records: [{ id: id(5), tenantId: T, at: now, tags: ["Example tag"], snapshotFile: "example-tenant_20261016-010000.json", status: "partial", steps: [retireStep({ status: "failed", error: RAW })], warnings: [] }, { id: id(6), tenantId: T, at: now, tags: ["Example tag"], snapshotFile: "example-tenant_20261016-010000.json", status: "restore-partial", steps: [retireStep({ status: "restore-failed", readBack: `not read: ${RAW}`, error: "The tool couldn't read it back, so the restore isn't confirmed." })], warnings: [] }] };
 const step = (order, kind, extra) => ({ order, kind, key: kind, name: `Example ${kind}`, method: "POST", path: "/web-filters/v1/site-lists", summary: "1 site, block", body: {}, status: "planned", ...extra });
 const build = {
   id: "00000001-0000-4000-a000-000000000000", tenantId: T, createdAt: now, status: "partial", snapshotFile: "example-tenant_20261016-010000.json",
   pilot: { profileKey: "profile", name: "WF pilot: Example profile", enabled: false, targets: { endpoints: [] } },
-  steps: [step(1, "site-list", { status: "created", id: "l1", readBack: "matches" }), step(2, "profile", { status: "failed", error: RAW })],
+  steps: [step(1, "site-list", { status: "created", id: "l1", readBack: "matches" }), step(2, "profile", { status: "failed", error: RAW }), step(3, "site-list", { status: "created", id: "l3", readBack: "not-read", readBackNote: RAW }), step(4, "policy", { status: "delete-failed", id: "p4", deleteReadBack: `not read: ${RAW}` })],
   checks: [{ ok: false, level: "fail", text: "Couldn't check the targets.", detail: RAW }, { ok: false, level: "fail", text: `Couldn't check the targets: ${RAW}` }, { ok: false, level: "fail", text: `No rollback snapshot could be saved, so nothing was built. ${RAW}` }],
 };
 const design = { policies: [], profiles: [{ key: "profile", name: "Example profile", mode: "preset", preset: "keep-it-clean", sourcePolicies: [{ id: "p0", name: "Base Policy", type: "web-control" }], flags: [], diff: [], siteLists: [], categoryActions: {} }], siteLists: [], limits: { profiles: { planned: 1, existing: 0, limit: 20 }, siteLists: { planned: 0, existing: 0, limit: 20 } }, cleanedUp: false, warnings: [] };
@@ -166,6 +172,16 @@ const ANSWERS = [
     steps: [click("[data-allow]"), click("#allow-go")],
     writes: { [`POST /api/pilot/${T}/allow`]: (body) => (body.dryRun ? { plan: { host: "app.example.com", site: "app.example.com", pilot, steps: [{ op: "add-site", listId: "l1", listName: "Example allows", site: "app.example.com" }], problems: [], notes: [] } } : { plan: {}, entry: allow(9, "added", { readBack: `not read: ${RAW}` }) }) },
   },
+  { page: `/pilot.html?tenant=${T}`, steps: [click('[data-undo="' + id(4) + '"]')], writes: { [`POST /api/pilot/${T}/allow/${id(4)}/undo`]: allow(4, "undo-failed", { undoReadBack: `not read: ${RAW}`, error: "The list couldn't be read back, so the removal isn't confirmed." }) } },
+  // The shape v0.3.18 drew as "Wave moved. Read back: not read: ..." with the raw answer in the message.
+  { page: `/promote.html?tenant=${T}`, steps: [click("[data-wave]")], writes: { [`POST /api/promote/${T}/wave`]: (body) => (body.dryRun ? { problems: [], policyName: pilot.policyName, before: { endpoints: ["w1"], endpointGroups: [] }, after: { endpoints: ["w1", "w9"], endpointGroups: [] }, devices: [{ id: "w9", hostname: "EXAMPLE-PC-09" }], enabled: false } : wave(9, "moved", { readBack: `not read: ${RAW}` })) } },
+  { page: `/promote.html?tenant=${T}`, steps: [click("#toggle")], writes: { [`POST /api/promote/${T}/enabled`]: { enabled: true, readBack: `not read: ${RAW}` } } },
+  { page: `/promote.html?tenant=${T}`, steps: [click(`[data-undo-wave="${id(4)}"]`)], writes: { [`POST /api/promote/${T}/wave/${id(4)}/undo`]: wave(4, "undo-failed", { undoReadBack: `not read: ${RAW}`, error: "The tool couldn't read the pilot policy back, so the undo isn't confirmed." }) } },
+  { page: `/promote.html?tenant=${T}`, steps: [click('input[name="tag"]'), click("#plan-retire"), click("#go-retire")], writes: { [`POST /api/retire/${T}/plan`]: { tags: ["Example tag"], steps: [{ op: "delete-entry", url: "blocked.example.com", tags: ["Example tag"] }], problems: [], warnings: [] }, [`POST /api/retire/${T}/execute`]: { ...retire.records[0], status: "failed", steps: [retireStep({ status: "failed", readBack: `not read: ${RAW}`, error: "The tool couldn't read it back, so the change isn't confirmed." })] } } },
+  { page: `/promote.html?tenant=${T}`, steps: [click("[data-restore]")], writes: { [`POST /api/retire/${T}/${id(5)}/restore`]: retire.records[1] } },
+  { page: `/build.html?tenant=${T}`, steps: [click("[data-rollback]")], writes: { [`POST /api/build/${T}/${build.id}/rollback`]: (body) => (body.dryRun ? { ...build, restorePlan: [] } : { ...build, status: "rollback-partial", rollback: { at: now, steps: [{ kind: "policy", name: "WF pilot: Example profile", status: "not confirmed", error: `A read-back couldn't read it (${RAW}), so it may still be there.` }] } }) } },
+  { page: `/cleanup.html?tenant=${T}`, steps: [click("#create-lists")], writes: { [`POST /api/cleanup/${T}/lists`]: (body) => (body.dryRun ? { lists: [{ name: "Example cleaned block", action: "block", sites: ["app.example.com"] }], problems: [], leftOut: 0 } : { tenantId: T, scope: T, createdAt: now, lists: [{ name: "Example cleaned block", action: "block", sites: 1, id: "l1", status: "created", readBack: `not read: ${RAW}` }] }) } },
+  { page: `/cleanup.html?tenant=${T}`, steps: [click("#undo-lists")], writes: { [`POST /api/cleanup/${T}/lists`]: { tenantId: T, scope: T, createdAt: now, lists: [{ name: "Example cleaned block", action: "block", sites: 1, id: "l1", status: "not confirmed", readBack: `not read: ${RAW}` }] } } },
 ];
 
 /** The frontend, with an API that answers reads from s.reads (or fails them all) and fails every write with the raw answer. */

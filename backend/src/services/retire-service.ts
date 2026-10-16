@@ -56,6 +56,10 @@ export interface RetireOverview {
 
 export type DoneStep = RetireStep & {
   status: "planned" | "done" | "failed" | "restored" | "restore-failed";
+  /**
+   * What the read-back after the step's last write found ("not read: " and why when no read worked). Set only once Sophos
+   * accepted that write, so a failed step with one was sent but not confirmed.
+   */
   readBack?: string;
   error?: string;
   /** For a deleted or patched entry: the whole entry as it was. */
@@ -214,28 +218,20 @@ export async function retire(dataDir: string, ctx: TenantContext, tags: string[]
           const p = await getPolicy(ro, t, step.policyId);
           return sameTags(settingValue<TagSetting>(p, TAGS_KEY), step.after) ? p : null;
         });
-        step.readBack = back.value ? "tags match" : "tags differ";
+        step.readBack = back.value ? "tags match" : back.unread ? `not read: ${back.unread}` : "tags differ";
       } else if (step.op === "delete-entry") {
         await auditedWrite({ tenantId: t }, "retire-delete", "local-site", step.id, () => deleteLocalSite(api, t, step.id), { retire: record.id, url: step.url, tags: step.tags });
-        const gone = await readBack(async () => {
-          try {
-            await getLocalSite(ro, t, step.id);
-            return null;
-          } catch (err) {
-            return errorStatus(err) === 404 ? true : null;
-          }
-        });
-        step.readBack = gone.value ? "404 on read-back" : "still there";
+        step.readBack = await goneOnReadBack(() => getLocalSite(ro, t, step.id));
       } else {
         await auditedWrite({ tenantId: t }, "retire-patch", "local-site", step.id, () => patchLocalSite(api, t, step.id, { tags: step.after }), { retire: record.id, url: step.url, before: step.before });
         const back = await readBack(async () => {
           const s = await getLocalSite(ro, t, step.id);
           return sameList(s.tags, step.after) ? s : null;
         });
-        step.readBack = back.value ? "tags match" : "tags differ";
+        step.readBack = back.value ? "tags match" : back.unread ? `not read: ${back.unread}` : "tags differ";
       }
-      step.status = /match|404/.test(step.readBack ?? "") ? "done" : "failed";
-      if (step.status === "failed") throw new Error(`Read back: ${step.readBack}.`);
+      step.status = /match|404/.test(step.readBack ?? "") && !step.readBack?.startsWith("not read") ? "done" : "failed";
+      if (step.status === "failed") throw new Error(unconfirmed(step.readBack, "change"));
     } catch (err) {
       step.status = "failed";
       step.error = err instanceof Error ? err.message : String(err);
@@ -247,6 +243,28 @@ export async function retire(dataDir: string, ctx: TenantContext, tags: string[]
   record.status = record.steps.every((s) => s.status === "done") ? "retired" : record.steps.some((s) => s.status === "done") ? "partial" : "failed";
   await saveRec(dataDir, record);
   return record;
+}
+
+/**
+ * Reads an entry back after its delete, until it answers 404: "404 on read-back", "still there", or "not read: " and why
+ * when no read worked (any answer but a 404 is a read that failed, not proof it's there).
+ */
+async function goneOnReadBack(get: () => Promise<unknown>): Promise<string> {
+  const gone = await readBack(async () => {
+    try {
+      await get();
+      return null;
+    } catch (err) {
+      if (errorStatus(err) === 404) return true;
+      throw err;
+    }
+  });
+  return gone.value ? "404 on read-back" : gone.unread ? `not read: ${gone.unread}` : "still there";
+}
+
+/** Why a write Sophos accepted isn't confirmed, from its read-back. What Sophos answered stays in the read-back, for a Detail line. */
+function unconfirmed(readBack: string | undefined, what: "change" | "restore"): string {
+  return readBack?.startsWith("not read") ? `The tool couldn't read it back, so the ${what} isn't confirmed.` : `Read back: ${readBack}.`;
 }
 
 /** Puts back everything a retire changed: entries first, then the policies. */
@@ -262,6 +280,9 @@ export async function restoreRetire(dataDir: string, ctx: TenantContext, id: str
   const done = record.steps.filter((s) => s.status === "done" || s.status === "failed" || s.status === "restore-failed");
   const order = [...done.filter((s) => s.op === "delete-entry"), ...done.filter((s) => s.op === "patch-entry"), ...done.filter((s) => s.op === "policy-tags")];
   for (const step of order) {
+    // From here the read-back and error are this restore's, set only by what it finds.
+    delete step.readBack;
+    delete step.error;
     try {
       if (step.op === "delete-entry") {
         const e = step.entry;
@@ -282,8 +303,13 @@ export async function restoreRetire(dataDir: string, ctx: TenantContext, id: str
             { restoreOf: record.id, url: e.url, tags: e.tags },
           );
           step.newId = value.id;
-          const back = await getLocalSite(ro, t, value.id);
-          step.readBack = sameList(back.tags, e.tags ?? []) && (back.categoryId ?? null) === (e.categoryId ?? null) ? "re-created, matches" : "re-created, differs";
+          // Made: a read that fails leaves it unconfirmed, not failed.
+          const back = await readBack(() => getLocalSite(ro, t, value.id));
+          step.readBack = back.value
+            ? sameList(back.value.tags, e.tags ?? []) && (back.value.categoryId ?? null) === (e.categoryId ?? null)
+              ? "re-created, matches"
+              : "re-created, differs"
+            : `not read: ${back.unread ?? "no read-back"}`;
         }
       } else if (step.op === "patch-entry") {
         await auditedWrite({ tenantId: t }, "restore-patch", "local-site", step.id, () => patchLocalSite(api, t, step.id, { tags: step.before }), { restoreOf: record.id, url: step.url });
@@ -291,7 +317,7 @@ export async function restoreRetire(dataDir: string, ctx: TenantContext, id: str
           const s = await getLocalSite(ro, t, step.id);
           return sameList(s.tags, step.before) ? s : null;
         });
-        step.readBack = back.value ? "tags match" : "tags differ";
+        step.readBack = back.value ? "tags match" : back.unread ? `not read: ${back.unread}` : "tags differ";
       } else {
         const body = { settings: { [TAGS_KEY]: { value: step.before } } };
         await auditedWrite({ tenantId: t }, "restore-tags", "policy", step.policyId, () => patchPolicy(api, t, step.policyId, body), { restoreOf: record.id });
@@ -299,9 +325,10 @@ export async function restoreRetire(dataDir: string, ctx: TenantContext, id: str
           const p = await getPolicy(ro, t, step.policyId);
           return sameTags(settingValue<TagSetting>(p, TAGS_KEY), step.before) ? p : null;
         });
-        step.readBack = back.value ? "tags match" : "tags differ";
+        step.readBack = back.value ? "tags match" : back.unread ? `not read: ${back.unread}` : "tags differ";
       }
-      step.status = /match|already there/.test(step.readBack ?? "") && !/differs/.test(step.readBack ?? "") ? "restored" : "restore-failed";
+      step.status = /match|already there/.test(step.readBack ?? "") && !/differs|^not read/.test(step.readBack ?? "") ? "restored" : "restore-failed";
+      if (step.status === "restore-failed") step.error = unconfirmed(step.readBack, "restore");
     } catch (err) {
       step.status = "restore-failed";
       step.error = err instanceof Error ? err.message : String(err);

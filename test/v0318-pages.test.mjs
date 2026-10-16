@@ -103,7 +103,8 @@ test("Readiness says what happened to the snapshot: saved, couldn't be saved (wh
       return toastAfter(b, `${base}/readiness.html?tenant=${T}`, "#run", [click("#run")]);
     };
     assert.deepEqual(await run("saved"), { kind: "toast-ok", text: "Check finished. Snapshot saved.", detail: null });
-    assert.deepEqual(await run("unsaved"), { kind: "toast-warn", text: "Check finished, but the rollback snapshot couldn't be saved.", detail: DETAIL });
+    // From v0.3.19 a snapshot that couldn't be saved is a write that failed: red.
+    assert.deepEqual(await run("unsaved"), { kind: "toast-err", text: "Check finished, but the rollback snapshot couldn't be saved.", detail: DETAIL });
     assert.deepEqual(await run("unreadable"), { kind: "toast-warn", text: "Check finished, but the tenant couldn't be read, so no snapshot was saved.", detail: null });
   } finally {
     srv.close();
@@ -140,7 +141,7 @@ test("Build says the build worked when only the read of the builds list after it
     assert.deepEqual(await build("ok", "fail"), { kind: "toast-warn", text: "Built and read back. The list of builds couldn't be read again, so it doesn't show this build yet.", detail: DETAIL });
     assert.equal(await b.evaluate(`document.querySelector("h1").textContent`), "Built 2 objects", "the page shows what the build did");
     assert.deepEqual(await build("ok", "ok"), { kind: "toast-ok", text: "Built and read back.", detail: null });
-    assert.deepEqual(await build("fail", "ok"), { kind: "toast-warn", text: "Couldn't build the pilot.", detail: DETAIL });
+    assert.deepEqual(await build("fail", "ok"), { kind: "toast-err", text: "Couldn't build the pilot.", detail: DETAIL });
   } finally {
     srv.close();
     await b?.close();
@@ -177,7 +178,8 @@ test("Create site lists says which list failed and that the rest weren't sent, w
       made = n;
       return toastAfter(b, `${base}/cleanup.html?tenant=${T}`, "#create-lists", [click("#create-lists")]);
     };
-    assert.deepEqual(await create(0), { kind: "toast-warn", text: `No site lists created. Creating "${LISTS[0]}" failed, so the 2 lists after it weren't sent.`, detail: DETAIL });
+    // From v0.3.19 red when none was made; amber when some were (v0319-pages has the read-backs that didn't confirm a list).
+    assert.deepEqual(await create(0), { kind: "toast-err", text: `No site lists created. Creating "${LISTS[0]}" failed, so the 2 lists after it weren't sent.`, detail: DETAIL });
     assert.deepEqual(await create(1), { kind: "toast-warn", text: `1 of 3 site lists created and read back. Creating "${LISTS[1]}" failed, so the list after it wasn't sent.`, detail: DETAIL });
     assert.deepEqual(await create(2), { kind: "toast-warn", text: `2 of 3 site lists created and read back. Creating "${LISTS[2]}" failed.`, detail: DETAIL });
     assert.deepEqual(await create(3), { kind: "toast-ok", text: "3 site lists created and read back.", detail: null });
@@ -243,8 +245,9 @@ test("an Allow the read-back didn't confirm isn't a green success: it says so, w
     };
     const UNCONFIRMED = "Sophos accepted the Allow for chat.example.org, but";
     assert.deepEqual(await allow(`not read: ${RAW}`), { kind: "toast-warn", text: `${UNCONFIRMED} the list couldn't be read back, so it isn't confirmed.`, detail: DETAIL });
-    assert.deepEqual(await allow("not found"), { kind: "toast-warn", text: `${UNCONFIRMED} the read-back didn't confirm it: not found.`, detail: null });
-    assert.deepEqual(await allow("list holds the site; profile read back without the link"), { kind: "toast-warn", text: `${UNCONFIRMED} the read-back didn't confirm it: list holds the site; profile read back without the link.`, detail: null });
+    // From v0.3.19 what the read-back found goes on the Detail line, like every reason.
+    assert.deepEqual(await allow("not found"), { kind: "toast-warn", text: `${UNCONFIRMED} the read-back didn't confirm it.`, detail: "Detail: Read back: not found." });
+    assert.deepEqual(await allow("list holds the site; profile read back without the link"), { kind: "toast-warn", text: `${UNCONFIRMED} the read-back didn't confirm it.`, detail: "Detail: Read back: list holds the site; profile read back without the link." });
     assert.deepEqual(await allow("site listed"), { kind: "toast-ok", text: "Allowed chat.example.org: site listed.", detail: null });
     assert.deepEqual(await allow("list holds the site; profile links it as allow"), { kind: "toast-ok", text: "Allowed chat.example.org: list holds the site; profile links it as allow.", detail: null });
   } finally {

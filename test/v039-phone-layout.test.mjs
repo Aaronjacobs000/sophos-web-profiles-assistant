@@ -48,12 +48,14 @@ async function openBrowser() {
     rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   };
   const portFile = path.join(profile, "DevToolsActivePort");
-  for (let i = 0; i < 300 && !existsSync(portFile) && child.exitCode === null; i++) await new Promise((r) => setTimeout(r, 100));
-  if (!existsSync(portFile)) {
+  // The browser creates the file before it writes the port in it, so a read in between finds no port (and a fetch then goes to port 80).
+  const portIn = () => (existsSync(portFile) ? /^\d+$/.exec(readFileSync(portFile, "utf8").split("\n")[0].trim())?.[0] : undefined);
+  let port;
+  for (let i = 0; i < 300 && !(port = portIn()) && child.exitCode === null; i++) await new Promise((r) => setTimeout(r, 100));
+  if (!port) {
     await stop();
     throw new Error(`The browser didn't start: ${stderr}`);
   }
-  const port = readFileSync(portFile, "utf8").split("\n")[0].trim();
   let ws;
   try {
     let target;

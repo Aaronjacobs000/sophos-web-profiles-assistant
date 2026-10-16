@@ -90,8 +90,14 @@ export interface BuildStep {
   body: Record<string, unknown>;
   status: "planned" | "created" | "failed" | "skipped" | "deleted" | "delete-failed";
   id?: string;
+  /** What the read-back after the create found; readBackNote says how it differed, or why it couldn't be read. */
   readBack?: "matches" | "differs" | "not-read";
   readBackNote?: string;
+  /**
+   * Set on a delete-failed step when Sophos accepted the rollback's delete (or gave no clear answer and nothing could be
+   * read) but the read-back didn't confirm it gone: "still there", or "not read: " and why.
+   */
+  deleteReadBack?: string;
   error?: string;
   note?: string;
   /** For a profile: its site lists by plan key, filled with real ids at build time. */
@@ -360,7 +366,8 @@ export async function auditedCreate<T extends { id: string }>(
   }
 }
 
-function sameSites(sent: string[], got: string[]): boolean {
+/** The same sites, whatever the order, case or repeats. */
+export function sameSites(sent: string[], got: string[]): boolean {
   const norm = (xs: string[]) => [...new Set(xs.map((s) => s.trim().toLowerCase()))].sort();
   return canonicalJson(norm(sent)) === canonicalJson(norm(got));
 }
@@ -413,10 +420,16 @@ export async function execute(
         step.note = note;
         listIds[step.key] = value.id;
         step.status = "created";
-        const back = await getSiteList(new ReadOnlyApi(api), t, value.id).catch(() => null);
-        const sites = back?.sites ?? (await listSites(new ReadOnlyApi(api), t, value.id)).map((s) => s.site);
-        step.readBack = back && back.name === body.name && sameSites(body.sites, sites) ? "matches" : "differs";
-        if (step.readBack === "differs") step.readBackNote = `Read back ${sites.length} sites named "${back?.name}".`;
+        // Made: a read-back that fails leaves the step unconfirmed, and the build goes on with its id.
+        const read = await readOnce(async () => {
+          const back = await getSiteList(new ReadOnlyApi(api), t, value.id);
+          return { name: back.name, sites: back.sites ?? (await listSites(new ReadOnlyApi(api), t, value.id)).map((s) => s.site) };
+        });
+        if ("unread" in read) notRead(step, read.unread);
+        else {
+          step.readBack = read.value.name === body.name && sameSites(body.sites, read.value.sites) ? "matches" : "differs";
+          if (step.readBack === "differs") step.readBackNote = `Read back ${read.value.sites.length} sites named "${read.value.name}".`;
+        }
       } else if (step.kind === "profile") {
         const body: Record<string, unknown> = { ...step.body };
         if (step.listActions?.length) {
@@ -441,7 +454,8 @@ export async function execute(
         step.note = note;
         profileId = value.id;
         step.status = "created";
-        const back = await getProfile(new ReadOnlyApi(api), t, value.id).catch(() => null);
+        const read = await readOnce(() => getProfile(new ReadOnlyApi(api), t, value.id));
+        const back = "unread" in read ? null : read.value;
         let same = !!back && back.name === body.name;
         if (back && same && body.filterByCategory === true) {
           const want = body.preset ? expandPreset(catalog, String(body.preset)) : expand(catalog, body as never);
@@ -453,7 +467,8 @@ export async function execute(
           const got = (back.siteListActions ?? []).map((x) => `${x.id}:${x.action}:${x.priority}`).sort();
           same = canonicalJson(want) === canonicalJson(got);
         }
-        step.readBack = same ? "matches" : "differs";
+        if ("unread" in read) notRead(step, read.unread);
+        else step.readBack = same ? "matches" : "differs";
       } else {
         if (!profileId) throw new Error("No profile was created, so the pilot policy wasn't sent.");
         const body = pilotPolicyBody(record.pilot.name, profileId, record.pilot.targets, record.pilot.enabled);
@@ -470,10 +485,14 @@ export async function execute(
         step.id = value.id;
         step.note = note;
         step.status = "created";
-        const back = await getPolicy(new ReadOnlyApi(api), t, value.id).catch(() => null);
-        step.readBack = back && policyMatches(body, back) ? "matches" : "differs";
-        if (back && step.readBack === "differs") step.readBackNote = "Settings or assignment read back differently.";
-        if (back) step.note = [step.note, `Read back at priority ${back.priority}.`].filter(Boolean).join(" ");
+        const read = await readOnce(() => getPolicy(new ReadOnlyApi(api), t, value.id));
+        if ("unread" in read) notRead(step, read.unread);
+        else {
+          const back = read.value;
+          step.readBack = policyMatches(body, back) ? "matches" : "differs";
+          if (step.readBack === "differs") step.readBackNote = "Settings or assignment read back differently.";
+          step.note = [step.note, `Read back at priority ${back.priority}.`].filter(Boolean).join(" ");
+        }
       }
       await saveRecord(dataDir, record);
     }
@@ -490,6 +509,21 @@ export async function execute(
   record.finishedAt = new Date().toISOString();
   await saveRecord(dataDir, record);
   return record;
+}
+
+/** One read after a create: what it found, or why it failed. */
+async function readOnce<T>(read: () => Promise<T>): Promise<{ value: T } | { unread: string }> {
+  try {
+    return { value: await read() };
+  } catch (err) {
+    return { unread: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** A step Sophos made whose read-back failed: not confirmed, with why (what Sophos answered) kept for its Detail line. */
+function notRead(step: BuildStep, why: string): void {
+  step.readBack = "not-read";
+  step.readBackNote = why;
 }
 
 export function policyMatches(sent: Record<string, unknown>, got: Policy): boolean {
@@ -568,6 +602,8 @@ export async function rollback(
       } else {
         await auditOrWarn({ ...entry, ok: false, error: message });
         s.status = "delete-failed";
+        // Refused: this delete wasn't accepted, so there's no read-back to keep.
+        delete s.deleteReadBack;
         out.push({ kind: s.kind, name: s.name, id: s.id, status: "failed", error: message });
         continue;
       }
@@ -584,8 +620,12 @@ export async function rollback(
     });
     s.status = gone.value ? "deleted" : "delete-failed";
     const read = gone.unread ? `A read-back couldn't read it (${gone.unread.replace(/\.$/, "")}), so it may still be there.` : "A read-back still found it, so it wasn't deleted.";
+    // Not confirmed gone after a delete Sophos accepted, or one it gave no clear answer to and nothing could be read: kept for the step's row.
+    if (gone.value || (unclear !== undefined && !gone.unread)) delete s.deleteReadBack;
+    else s.deleteReadBack = gone.unread ? `not read: ${gone.unread}` : "still there";
     if (unclear === undefined) {
-      out.push({ kind: s.kind, name: s.name, id: s.id, status: gone.value ? "deleted, 404 on read-back" : "still there after delete" });
+      // A read that failed doesn't show it's still there, only that the delete isn't confirmed.
+      out.push(gone.value || !gone.unread ? { kind: s.kind, name: s.name, id: s.id, status: gone.value ? "deleted, 404 on read-back" : "still there after delete" } : { kind: s.kind, name: s.name, id: s.id, status: "not confirmed", error: read });
       if (answered404 !== undefined) {
         await auditOrWarn(gone.value ? { ...entry, ok: true, detail: { ...entry.detail, note: "Sophos answered 404, so it was already gone, and a read-back found it gone (404)" } } : { ...entry, ok: false, error: `${answered404}. ${read}` });
       }
@@ -596,7 +636,8 @@ export async function rollback(
     } else {
       const error = `${unclear.reason}. ${read}`;
       await auditOrWarn({ ...entry, ok: false, error });
-      out.push({ kind: s.kind, name: s.name, id: s.id, status: "failed", error });
+      // Found still there, it failed. Not read, it may have gone through: not confirmed either way.
+      out.push({ kind: s.kind, name: s.name, id: s.id, status: gone.unread ? "not confirmed" : "failed", error });
     }
   }
   for (const step of restorePlan) {
@@ -610,8 +651,26 @@ export async function rollback(
     }
   }
   if (restoreRefused) out.push({ kind: "website-management", name: "Website Management from the snapshot", status: "failed", error: restoreRefused });
+  // Website Management read back once the restore is sent: confirmed when the snapshot's entries all read back as it has them.
+  const snapshotSites = snapshot?.objects.websiteManagement;
+  if (snapshotSites && out.some((o) => o.kind === "website-management" && o.status === "done")) {
+    const back = await readBack(async () => (planWebsiteManagementRestore(snapshotSites, await listLocalSites(ro, t)).length === 0 ? true : null));
+    const name = "Website Management read back";
+    out.push(
+      back.value
+        ? { kind: "website-management", name, status: "matches the snapshot" }
+        : {
+            kind: "website-management",
+            name,
+            status: "not confirmed",
+            error: back.unread
+              ? `A read-back couldn't read Website Management (${back.unread.replace(/\.$/, "")}), so the restore isn't confirmed.`
+              : "Website Management didn't read back as the snapshot has it. Compare with the snapshot to see what differs.",
+          },
+    );
+  }
   record.rollback = { at: new Date().toISOString(), steps: out };
-  record.status = out.every((o) => o.status !== "failed" && o.status !== "still there after delete") ? "rolled-back" : "rollback-partial";
+  record.status = out.every((o) => !["failed", "still there after delete", "not confirmed"].includes(o.status)) ? "rolled-back" : "rollback-partial";
   await saveRecord(dataDir, record);
   return { ...record, restorePlan, ...refused };
 }

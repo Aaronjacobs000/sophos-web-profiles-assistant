@@ -90,8 +90,9 @@ test("the Retired table shows every status and button in full, inside its box, a
     }
     // The status words and steps are still the record's, in plain words.
     const rows = await b.evaluate(`[...document.querySelectorAll(".retired-table tbody tr")].map((tr) => [tr.children[2].textContent.trim(), [...tr.querySelectorAll("button")].map((x) => x.textContent.trim()).join(", ")])`);
+    // From v0.3.19 a restore Sophos accepted whose read-back differed is not confirmed, rather than unfinished.
     assert.deepEqual(rows, [
-      ["Restore didn't finish", "Restore, Compare with snapshot"],
+      ["Restore not confirmed", "Restore, Compare with snapshot"],
       ["Retire failed", "Restore, Compare with snapshot"],
       ["Retire didn't finish", "Restore, Compare with snapshot"],
       ["Restored", "Compare with snapshot"],
@@ -140,7 +141,8 @@ const PROMOTE = `(() => {
   const card = [...document.querySelectorAll(".panel-card")].find((s) => s.querySelector("h2")?.textContent === "Pilot policy");
   const detail = document.querySelector("[data-unread-detail]");
   const main = document.querySelector("#main").cloneNode(true);
-  main.querySelectorAll("[data-unread-detail]").forEach((e) => e.remove());
+  // Every Detail line, which is where a raw answer goes (a retire record's too, from v0.3.19).
+  main.querySelectorAll("[data-unread-detail], [data-error-detail]").forEach((e) => e.remove());
   return {
     h1: document.querySelector("h1")?.textContent.trim() ?? null,
     tag: card?.querySelector(".card-head .tag")?.textContent ?? null,

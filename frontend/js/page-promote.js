@@ -4,7 +4,7 @@
 
 import { api } from "./api.js";
 import { currentTenantId, getStatus, initShell, setTenant } from "./shell.js";
-import { detailHtml, esc, escAttr, plural, readBackParts, retireStatus, retireStepStatus, rollbackUnfinishedBanner, sentence } from "./ui.js";
+import { OUTCOME_TAG, OUTCOME_TOAST, detailHtml, esc, escAttr, plural, readBackParts, retireStatus, retireStepStatus, rollbackUnfinishedBanner, sentence, unconfirmedReason } from "./ui.js";
 import { icon } from "./icons.js";
 import { toast } from "./toast.js";
 import { diffHtml } from "./diff-view.js";
@@ -21,10 +21,61 @@ let diff = null;
 const n = (x) => Number(x ?? 0).toLocaleString("en-US");
 const when = (iso) => (iso ? new Date(iso).toLocaleString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "");
 const REASON = { "windows-old-agent": "Windows below 2026.1", "windows-no-agent-version": "no agent version", macos: "macOS", other: "other platform", server: "server: needs a server Web Control policy", computer: "computer: needs a Web Control policy" };
-const WAVE_STATUS = { moved: '<span class="tag tag-ok">Moved</span>', undone: '<span class="tag tag-muted">Undone</span>', failed: '<span class="tag tag-bad">Failed</span>', "undo-failed": '<span class="tag tag-bad">Undo failed</span>' };
-// The plain line on a wave that failed; what Sophos or the tool answered goes on the Detail line under it. Any other status has nothing to fix.
-const WAVE_ERROR = { failed: "The move didn't finish.", "undo-failed": "The undo didn't finish. Undo again, or check the pilot in Sophos Fusion." };
-const RETIRE_STATUS = { retired: "tag-ok", restored: "tag-muted", partial: "tag-warn", "restore-partial": "tag-warn", failed: "tag-bad" };
+// What a move confirmed: the read-back found the new devices on the pilot.
+const MOVED = "assignment matches";
+// What an undo confirmed: the read-back found the assignment as it was before the wave.
+const UNDONE = "assignment back as before the wave";
+
+/**
+ * A wave's row as the history shows it (category C): green only when the read-back confirmed the move; amber when
+ * Sophos accepted the move or the undo but the read-back didn't confirm it; red when it failed. The plain line goes
+ * under the devices, and why (what Sophos or the tool answered) on the Detail line.
+ */
+function waveRow(w) {
+  const tag = (state, label) => `<span class="tag ${state === "done" ? "tag-muted" : OUTCOME_TAG[state]}">${label}</span>`;
+  switch (w.status) {
+    case "moved":
+      return w.readBack === MOVED
+        ? { tag: tag("confirmed", "Moved") }
+        : { tag: tag("unconfirmed", "Not confirmed"), note: "Sophos accepted the move, but the read-back didn't confirm it. Check the pilot in Sophos Fusion.", detail: unconfirmedReason(w.readBack, w.error) };
+    case "failed":
+      return w.readBack
+        ? { tag: tag("unconfirmed", "Not confirmed"), note: "Sophos accepted the move, but the read-back didn't confirm it. Check the pilot in Sophos Fusion.", detail: unconfirmedReason(w.readBack, w.error) }
+        : { tag: tag("failed", "Failed"), note: "The move didn't finish.", detail: w.error };
+    case "undone":
+      return { tag: tag("done", "Undone") };
+    case "undo-failed":
+      return w.undoReadBack
+        ? { tag: tag("unconfirmed", "Undo not confirmed"), note: "Sophos accepted the undo, but the read-back didn't confirm it. Undo again, or check the pilot in Sophos Fusion.", detail: unconfirmedReason(w.undoReadBack, w.error) }
+        : { tag: tag("failed", "Undo failed"), note: "The undo didn't finish. Undo again, or check the pilot in Sophos Fusion.", detail: w.error };
+    default:
+      return { tag: "" };
+  }
+}
+
+const stepName = (s) => (s.op === "policy-tags" ? s.policyName : s.url);
+
+/**
+ * A retire record's outcome (category C): confirmed when every step read back as planned; failed when nothing went
+ * through; otherwise amber: it didn't finish (a step failed, or a retire stopped before its last steps), or Sophos
+ * accepted every step but a read-back didn't confirm one. The reason is the first step that failed, or the first one
+ * not confirmed.
+ */
+function retireOutcome(r) {
+  if (r.status === "retired" || r.status === "restored") return { state: "confirmed", label: retireStatus(r.status), reason: "" };
+  const restoring = r.status === "restore-partial";
+  const bad = r.steps.filter((x) => x.status === (restoring ? "restore-failed" : "failed"));
+  const refused = bad.find((x) => !x.readBack);
+  const accepted = r.steps.some((x) => x.status === (restoring ? "restored" : "done") || (bad.includes(x) && x.readBack));
+  // A retire stops at its first step that isn't confirmed, so the steps after it were never sent.
+  const unsent = !restoring && r.steps.some((x) => x.status === "planned");
+  const first = refused ?? bad[0];
+  const why = !first ? "" : refused ? sentence(first.error ?? "") : unconfirmedReason(first.readBack, first.error);
+  const reason = why ? `${stepName(first)}: ${why}` : "";
+  if (!accepted) return { state: "failed", label: retireStatus(r.status), reason };
+  if (refused || unsent) return { state: "unconfirmed", label: restoring ? "Restore didn't finish" : "Retire didn't finish", reason };
+  return { state: "unconfirmed", label: restoring ? "Restore not confirmed" : "Retire not confirmed", reason, accepted: restoring ? "the restore" : "the retire" };
+}
 
 function pilotCard() {
   const p = promo.policy;
@@ -80,12 +131,11 @@ function historyCard() {
   const undoable = promo.waves.filter((w) => ["moved", "undo-failed"].includes(w.status));
   const rows = promo.waves
     .map((w) => {
-      // A read-back that couldn't read the policy says "not read" here; why goes on the Detail line, with the error of a wave that failed.
+      // A read-back that couldn't read the policy says "not read" here; why goes on the Detail line.
       const back = readBackParts(w.readBack);
-      const failed = WAVE_ERROR[w.status] && w.error;
-      const detail = [back.detail, failed ? w.error : ""].filter(Boolean).map(sentence).join(" ");
-      return `<li><div><div class="w-name">${when(w.at)}: ${n(w.devices.length)} ${w.devices.length === 1 ? "device" : "devices"}</div><div class="w-devs">${esc(w.devices.map((d) => d.hostname).join(", "))}${back.plain ? `. Read back: ${esc(back.plain)}` : ""}</div>${failed ? `<span class="err-note">${WAVE_ERROR[w.status]}</span>` : ""}${detailHtml(detail)}</div>
-      <span>${WAVE_STATUS[w.status] ?? ""}${undoable.includes(w) ? ` <button class="btn btn-small" data-undo-wave="${escAttr(w.id)}"${off(w) ? ` disabled title="${escAttr(why)}"` : ""}>Undo</button>` : ""}</span></li>`;
+      const row = waveRow(w);
+      return `<li><div><div class="w-name">${when(w.at)}: ${n(w.devices.length)} ${w.devices.length === 1 ? "device" : "devices"}</div><div class="w-devs">${esc(w.devices.map((d) => d.hostname).join(", "))}${back.plain ? `. Read back: ${esc(back.plain)}` : ""}</div>${row.note ? `<span class="err-note">${row.note}</span>` : ""}${detailHtml(row.detail)}</div>
+      <span>${row.tag}${undoable.includes(w) ? ` <button class="btn btn-small" data-undo-wave="${escAttr(w.id)}"${off(w) ? ` disabled title="${escAttr(why)}"` : ""}>Undo</button>` : ""}</span></li>`;
     })
     .join("");
   return `<section class="panel-card"><h2>Waves moved</h2>${undoable.some(off) ? `<p class="hint" data-undo-off>${esc(why)}</p>` : ""}${rows ? `<ul class="wave-list">${rows}</ul>` : '<p class="muted">None yet.</p>'}</section>`;
@@ -125,8 +175,13 @@ function retireCard() {
 
 function recordsCard() {
   const rows = retire.records
-    .map((r) => `<tr><td class="r-when">${when(r.at)}</td><td class="r-tags">${esc(r.tags.join(", "))}</td><td class="r-status"><span class="tag ${RETIRE_STATUS[r.status] ?? "tag-muted"}">${esc(retireStatus(r.status))}</span></td><td class="r-steps">${esc(r.steps.map((s) => `${s.op === "policy-tags" ? s.policyName : s.url}: ${retireStepStatus(s.status)}${s.readBack ? ` (${s.readBack})` : ""}`).join("; "))}</td>
-      <td class="r-act"><div class="r-actions">${["retired", "partial", "restore-partial", "failed"].includes(r.status) ? `<button class="btn btn-small" data-restore="${escAttr(r.id)}">Restore</button>` : ""}<button class="btn btn-small" data-diff="${escAttr(r.snapshotFile)}">Compare with snapshot</button></div></td></tr>`)
+    .map((r) => {
+      // A restored record is muted, not green: the retire it undid is over. A read-back that couldn't read says "not read"; why goes on the Detail line.
+      const o = retireOutcome(r);
+      const cls = r.status === "restored" ? "tag-muted" : OUTCOME_TAG[o.state];
+      return `<tr><td class="r-when">${when(r.at)}</td><td class="r-tags">${esc(r.tags.join(", "))}</td><td class="r-status"><span class="tag ${cls}">${esc(o.label)}</span></td><td class="r-steps">${esc(r.steps.map((s) => `${stepName(s)}: ${retireStepStatus(s.status, s.readBack)}${s.readBack ? ` (${readBackParts(s.readBack).plain})` : ""}`).join("; "))}${detailHtml(o.reason)}</td>
+      <td class="r-act"><div class="r-actions">${["retired", "partial", "restore-partial", "failed"].includes(r.status) ? `<button class="btn btn-small" data-restore="${escAttr(r.id)}">Restore</button>` : ""}<button class="btn btn-small" data-diff="${escAttr(r.snapshotFile)}">Compare with snapshot</button></div></td></tr>`;
+    })
     .join("");
   // The card sizes the table: on a narrow card each record stacks, so the status and the buttons are never cut off.
   return `<section class="panel-card retired-card"><h2>Retired</h2>${rows ? `<div class="table-wrap"><table class="data-table retired-table"><thead><tr><th>When</th><th>Tags</th><th>Status</th><th>Steps</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="muted">Nothing retired yet.</p>'}</section>`;
@@ -215,6 +270,13 @@ function wireRetry() {
   );
 }
 
+/** The message after a retire or a restore: its outcome in plain words, colored by what was confirmed, with the reason on the Detail line. */
+function outcomeToast(r) {
+  const o = retireOutcome(r);
+  const text = o.accepted ? `Sophos accepted ${o.accepted}, but the read-back didn't confirm all of it.` : `${o.label}.`;
+  toast(text, OUTCOME_TOAST[o.state], o.state === "confirmed" ? 9000 : 10000, o.reason);
+}
+
 function wire() {
   const t = encodeURIComponent(tenantId);
   wireRetry();
@@ -225,11 +287,14 @@ function wire() {
   main.querySelector("#toggle")?.addEventListener("click", async () => {
     const on = !promo.policy.enabled;
     if (!window.confirm(on ? `Turn on "${promo.policy.name}"? Its devices start filtering with the profile.` : `Turn off "${promo.policy.name}"? Its devices fall back to the next policy.`)) return;
+    const word = on ? "on" : "off";
     try {
       const r = await api.post(`/api/promote/${t}/enabled`, { enabled: on });
-      toast(`Pilot ${r.enabled ? "on" : "off"}. Read back: ${r.readBack}.`, r.readBack === "matches" ? "ok" : "warn", 8000);
+      // Green only when the read-back confirmed it; why it isn't confirmed goes on the Detail line, never the read-back itself in the message.
+      if (r.readBack === "matches") toast(`Pilot turned ${word} and read back.`, OUTCOME_TOAST.confirmed, 8000);
+      else toast(`Sophos accepted turning the pilot ${word}, but the read-back didn't confirm it.`, OUTCOME_TOAST.unconfirmed, 10000, readBackParts(r.readBack).detail || `The pilot policy read back still ${on ? "off" : "on"}.`);
     } catch (err) {
-      toast(`Couldn't turn the pilot ${on ? "on" : "off"}.`, "warn", 9000, err.message);
+      toast(`Couldn't turn the pilot ${word}.`, OUTCOME_TOAST.failed, 9000, err.message);
     }
     await reread();
   });
@@ -247,10 +312,12 @@ function wire() {
         b.disabled = true;
         b.innerHTML = '<span class="spinner"></span>Moving';
         const r = await api.post(`/api/promote/${t}/wave`, { devices: ids, dryRun: false });
-        if (r.status === "moved") toast(`Wave moved. Read back: ${r.readBack}.`, "ok", 9000);
-        else toast(`Couldn't move wave ${wave.n}.`, "warn", 9000, r.error);
+        // Green only when the read-back found the devices on the pilot. A read-back on record means Sophos accepted the move.
+        if (r.status === "moved" && r.readBack === MOVED) toast(`Wave ${wave.n} moved and read back.`, OUTCOME_TOAST.confirmed, 9000);
+        else if (r.readBack) toast(`Sophos accepted wave ${wave.n}, but the read-back didn't confirm the move.`, OUTCOME_TOAST.unconfirmed, 10000, unconfirmedReason(r.readBack, r.error));
+        else toast(`Couldn't move wave ${wave.n}.`, OUTCOME_TOAST.failed, 9000, r.error);
       } catch (err) {
-        toast(`Couldn't move wave ${wave.n}.`, "warn", 9000, err.message);
+        toast(`Couldn't move wave ${wave.n}.`, OUTCOME_TOAST.failed, 9000, err.message);
       }
       await reread();
     }),
@@ -260,10 +327,12 @@ function wire() {
       if (!window.confirm("Put the pilot's assignment back as it was before this wave?")) return;
       try {
         const r = await api.post(`/api/promote/${t}/wave/${encodeURIComponent(b.dataset.undoWave)}/undo`, {});
-        if (r.status === "undone") toast(`Undone. ${r.readBack}.`, "ok", 9000);
-        else toast("Couldn't undo the wave.", "warn", 9000, r.error);
+        // Green only when the read-back found the assignment as it was; an undo read-back on record means Sophos accepted the undo.
+        if (r.status === "undone" && r.readBack === UNDONE) toast("Wave undone and read back.", OUTCOME_TOAST.confirmed, 9000);
+        else if (r.undoReadBack || r.status === "undone") toast("Sophos accepted the undo, but the read-back didn't confirm it.", OUTCOME_TOAST.unconfirmed, 10000, unconfirmedReason(r.undoReadBack ?? r.readBack, r.error));
+        else toast("Couldn't undo the wave.", OUTCOME_TOAST.failed, 9000, r.error);
       } catch (err) {
-        toast("Couldn't undo the wave.", "warn", 9000, err.message);
+        toast("Couldn't undo the wave.", OUTCOME_TOAST.failed, 9000, err.message);
       }
       await reread();
     }),
@@ -290,11 +359,11 @@ function wire() {
     e.target.innerHTML = '<span class="spinner"></span>Retiring';
     try {
       const r = await api.post(`/api/retire/${t}/execute`, { tags: retirePlan.tags, confirm: !!confirmBox?.checked });
-      toast(`${retireStatus(r.status)}.`, r.status === "retired" ? "ok" : "warn", 9000);
+      outcomeToast(r);
       retirePlan = null;
       chosenTags = [];
     } catch (err) {
-      toast("Couldn't retire the tags.", "warn", 10000, err.message);
+      toast("Couldn't retire the tags.", OUTCOME_TOAST.failed, 10000, err.message);
     }
     await reread();
   });
@@ -305,9 +374,9 @@ function wire() {
       b.innerHTML = '<span class="spinner"></span>Restoring';
       try {
         const r = await api.post(`/api/retire/${t}/${encodeURIComponent(b.dataset.restore)}/restore`, {});
-        toast(`${retireStatus(r.status)}.`, r.status === "restored" ? "ok" : "warn", 9000);
+        outcomeToast(r);
       } catch (err) {
-        toast("Couldn't restore the tags.", "warn", 10000, err.message);
+        toast("Couldn't restore the tags.", OUTCOME_TOAST.failed, 10000, err.message);
       }
       await reread();
     }),

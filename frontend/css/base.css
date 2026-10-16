@@ -116,7 +116,7 @@ a { color: var(--accent-text); text-decoration: none; }
 a:hover { text-decoration: underline; text-decoration-color: var(--accent-line); text-underline-offset: 3px; }
 strong { color: var(--ink-1); font-weight: 650; }
 
-code, pre, .mono { font-family: var(--mono); }
+code, pre { font-family: var(--mono); }
 code {
   font-size: 0.86em;
   padding: 1px 5px;
@@ -146,7 +146,7 @@ kbd {
   color: var(--ink-3);
 }
 
-.num, .tnum { font-variant-numeric: tabular-nums; }
+.num { font-variant-numeric: tabular-nums; }
 ::selection { background: var(--accent-glow); }
 ::placeholder { color: var(--ink-4); }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
@@ -200,7 +200,6 @@ kbd {
 @keyframes drift-b { from { transform: translate3d(0, 0, 0); } to { transform: translate3d(-6vw, -6vw, 0); } }
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
-@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes stripes { from { background-position: 0 0; } to { background-position: 24px 0; } }
 

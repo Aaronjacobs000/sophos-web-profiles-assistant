@@ -9,9 +9,10 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { siteListsFrom, type CleanupResult, type SiteListOut } from "../domain/cleanup.js";
 import { ReadOnlyApi, errorStatus, type TenantApi } from "../sophos/api/requester.js";
-import { createSiteList, deleteSiteList, getSiteList, listSiteLists } from "../sophos/api/web-filters.js";
-import { auditedCreate } from "./build-service.js";
+import { createSiteList, deleteSiteList, getSiteList, listSiteLists, listSites } from "../sophos/api/web-filters.js";
+import { auditedCreate, sameSites } from "./build-service.js";
 import { auditedWrite } from "./audit-log.js";
+import { readBack } from "./write-check.js";
 import { readText, saveFile } from "./safe-files.js";
 import { SITE_LIST_LIMIT } from "../domain/design.js";
 
@@ -19,6 +20,11 @@ export interface ListsRecord {
   tenantId: string;
   scope: string;
   createdAt: string;
+  /**
+   * Each list as the create left it, or the undo after it: status "created", "failed" or "planned" (not sent), then
+   * "deleted", "still there after delete", "not confirmed", "in use by a profile, left" or "delete failed". readBack is
+   * what the read-back after the last write Sophos accepted found ("matches", how it differed, or "not read: " and why).
+   */
   lists: Array<{ name: string; action: string; sites: number; id?: string; status: string; readBack?: string; error?: string }>;
 }
 
@@ -68,8 +74,15 @@ export async function createLists(dataDir: string, api: TenantApi, tenantId: str
       );
       row.id = value.id;
       row.status = "created";
-      const back = await getSiteList(new ReadOnlyApi(api), tenantId, value.id);
-      row.readBack = (back.sites ?? []).length === l.sites.length ? "matches" : `read back ${(back.sites ?? []).length} sites`;
+      // Made: a read-back that fails or differs leaves it unconfirmed, and the next list is still sent.
+      const ro = new ReadOnlyApi(api);
+      const back = await readBack(async () => {
+        const got = await getSiteList(ro, tenantId, value.id);
+        return got.sites ?? (await listSites(ro, tenantId, value.id)).map((x) => x.site);
+      });
+      if (!back.value) row.readBack = `not read: ${back.unread ?? "no read-back"}`;
+      else if (sameSites(l.sites, back.value)) row.readBack = "matches";
+      else row.readBack = back.value.length === l.sites.length ? "read back with other sites than were sent" : `read back ${back.value.length} ${back.value.length === 1 ? "site" : "sites"}, not the ${l.sites.length} sent`;
     } catch (err) {
       row.status = "failed";
       row.error = err instanceof Error ? err.message : String(err);
@@ -89,12 +102,18 @@ export async function undoLists(dataDir: string, api: TenantApi, scope: string):
   for (const row of record.lists.filter((r) => r.id && r.status === "created")) {
     try {
       await auditedWrite({ tenantId: record.tenantId }, "delete", "site-list", row.id!, () => deleteSiteList(api, record.tenantId, row.id!), { name: row.name, undo: scope });
-      try {
-        await getSiteList(new ReadOnlyApi(api), record.tenantId, row.id!);
-        row.status = "still there after delete";
-      } catch (err) {
-        row.status = errorStatus(err) === 404 ? "deleted" : "not confirmed";
-      }
+      // Gone once a read answers 404. Any other answer is a read that failed, not proof it's still there.
+      const gone = await readBack(async () => {
+        try {
+          await getSiteList(new ReadOnlyApi(api), record.tenantId, row.id!);
+          return null;
+        } catch (err) {
+          if (errorStatus(err) === 404) return true;
+          throw err;
+        }
+      });
+      row.status = gone.value ? "deleted" : gone.unread ? "not confirmed" : "still there after delete";
+      row.readBack = gone.value ? "404 on read-back" : gone.unread ? `not read: ${gone.unread}` : "still there";
     } catch (err) {
       row.status = errorStatus(err) === 409 ? "in use by a profile, left" : "delete failed";
       row.error = err instanceof Error ? err.message : String(err);

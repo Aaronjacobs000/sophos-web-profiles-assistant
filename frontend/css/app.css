@@ -22,7 +22,6 @@ a.step-item:hover { background: var(--glass-2); text-decoration: none; }
   font-variant-numeric: tabular-nums;
 }
 .step-item.is-active .step-num { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-.step-item.is-done .step-num { border-color: var(--ok-line); color: var(--ok); }
 .step-name { display: block; font-size: 13px; font-weight: 600; line-height: 1.3; }
 .step-sub { display: block; font-size: 11.5px; color: var(--ink-4); line-height: 1.35; margin-top: 1px; }
 .step-item.is-disabled { opacity: 0.55; cursor: not-allowed; }
@@ -131,7 +130,6 @@ a.ctx-chip:hover { border-color: var(--line-2); background: var(--glass-2); text
 .count-chip.is-fix { border-left-color: var(--bad); }
 .count-chip.is-ready { border-left-color: var(--ok); }
 .count-chip.is-unread { border-left-color: var(--ink-4); }
-.count-chip.is-queued { border-left-color: var(--line-2); }
 .estate-progress { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px; align-items: center; margin-bottom: 16px; }
 .estate-progress .bar { height: 8px; }
 .estate-table td.num, .estate-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -141,7 +139,7 @@ a.ctx-chip:hover { border-color: var(--line-2); background: var(--glass-2); text
 .pct { color: var(--ink-3); font-size: 12px; margin-left: 4px; }
 .verdict-ready { color: #a8efc3; background: var(--ok-soft); border-color: var(--ok-line); }
 .verdict-fixes { color: #ffc2c8; background: var(--bad-soft); border-color: var(--bad-line); }
-.verdict-unreadable, .verdict-error { color: var(--ink-3); background: var(--glass-2); }
+.verdict-unreadable { color: var(--ink-3); background: var(--glass-2); }
 .verdict-reading { color: var(--accent-text); background: var(--accent-soft); border-color: var(--accent-line); }
 
 /* ---------- help ---------- */

@@ -138,6 +138,8 @@ export interface AllowEntry {
   profileBefore?: { filterBySiteList?: boolean; siteListActions: NonNullable<WebProfile["siteListActions"]> };
   status: "added" | "failed" | "undone" | "undo-failed";
   readBack?: string;
+  /** What the read-back after the last undo found, set only when Sophos accepted the undo but the read-back didn't confirm it. */
+  undoReadBack?: string;
   error?: string;
   undoneAt?: string;
   undo?: string[];
@@ -307,8 +309,12 @@ export async function addAllow(dataDir: string, ctx: TenantContext, host: string
         entry.listId = value.id;
         entry.listName = step.name;
         entry.createdList = true;
-        const back = await getSiteList(ro, t, value.id);
-        entry.readBack = (back.sites ?? []).map((s) => s.toLowerCase()).includes(site) ? "list holds the site" : "list read back without the site";
+        // Made: a read-back that fails leaves the Allow unconfirmed, not failed, and the list is still the build's.
+        const back = await readBack(async () => {
+          const l = await getSiteList(ro, t, value.id);
+          return l.sites ?? (await listSites(ro, t, value.id)).map((x) => x.site);
+        });
+        entry.readBack = back.value ? (back.value.map((x) => x.toLowerCase()).includes(site) ? "list holds the site" : "list read back without the site") : `not read: ${back.unread ?? "no read-back"}`;
         // The build owns the list from here, so rolling the build back deletes it.
         const build = await getBuild(dataDir, t, plan.pilot.buildId);
         build.steps.push({
@@ -359,6 +365,8 @@ export async function undoAllow(dataDir: string, ctx: TenantContext, allowId: st
   if (!["added", "undo-failed"].includes(entry.status) || !entry.listId) throw new Error(`This entry is ${entry.status}; there's nothing to undo.`);
   const listId = entry.listId;
   const notes: string[] = [];
+  // Only this attempt's read-back counts.
+  delete entry.undoReadBack;
   try {
     const sites = await listSites(ro, t, listId);
     const ownsList = record.allows.some((a) => a.listId === listId && a.createdList);
@@ -376,32 +384,41 @@ export async function undoAllow(dataDir: string, ctx: TenantContext, allowId: st
           const q = await getProfile(ro, t, entry.profileId);
           return (q.siteListActions ?? []).some((a) => a.id === listId) ? null : q;
         });
-        notes.push(back.value ? "Profile read back without the list." : "Profile still shows the list.");
+        // A read that failed doesn't show the list is still linked, only that the unlink isn't confirmed.
+        notes.push(back.value ? "Profile read back without the list." : back.unread ? "The profile couldn't be read back, so the unlink isn't confirmed." : "Profile still shows the list.");
       }
       await auditedWrite({ tenantId: t }, "delete", "site-list", listId, () => deleteSiteList(api, t, listId), { name: entry.listName, undo: entry.id });
+      // Any answer but a 404 is a read that failed, not proof the list is still there.
       const gone = await readBack(async () => {
         try {
           await getSiteList(ro, t, listId);
           return null;
         } catch (err) {
-          return errorStatus(err) === 404 ? true : null;
+          if (errorStatus(err) === 404) return true;
+          throw err;
         }
       });
-      notes.push(gone.value ? "List deleted, 404 on read-back." : "List still there after delete.");
+      notes.push(gone.value ? "List deleted, 404 on read-back." : gone.unread ? "The list couldn't be read back, so the delete isn't confirmed." : "List still there after delete.");
       const build = await getBuild(dataDir, t, entry.buildId).catch(() => null);
       const step = build?.steps.find((s) => s.id === listId);
       if (build && step) {
         step.status = gone.value ? "deleted" : "delete-failed";
         await saveRecord(dataDir, build);
       }
-      if (!gone.value) throw new Error(notes.join(" "));
+      if (!gone.value) {
+        entry.undoReadBack = gone.unread ? `not read: ${gone.unread}` : "list still there";
+        throw new Error(notes.join(" "));
+      }
     } else {
       const siteId = entry.siteId ?? sites.find((s) => s.site.toLowerCase() === entry.site)?.id;
       if (!siteId) throw new Error(`${entry.site} isn't in the list any more.`);
       await auditedWrite({ tenantId: t }, "delete-site", "site-list", listId, () => deleteSite(api, t, listId, siteId), { site: entry.site, undo: entry.id });
       const back = await readBack(async () => ((await listSites(ro, t, listId)).some((s) => s.site.toLowerCase() === entry.site) ? null : true));
-      notes.push(back.value ? "Site removed, confirmed on read-back." : "Site still listed after delete.");
-      if (!back.value) throw new Error(notes.join(" "));
+      notes.push(back.value ? "Site removed, confirmed on read-back." : back.unread ? "The list couldn't be read back, so the removal isn't confirmed." : "Site still listed after delete.");
+      if (!back.value) {
+        entry.undoReadBack = back.unread ? `not read: ${back.unread}` : "site still listed";
+        throw new Error(notes.join(" "));
+      }
     }
     entry.status = "undone";
     entry.undoneAt = new Date().toISOString();

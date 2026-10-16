@@ -88,6 +88,11 @@ export interface SnapshotDiff {
   sections: SectionDiff[];
   /** Objects someone else added or removed since the snapshot. */
   othersCount: number;
+  /**
+   * Sections that weren't compared, because the snapshot or the tenant now couldn't be read there. matches and identical
+   * speak only for the sections that were, so neither is a confirmation while this has any.
+   */
+  unread: string[];
 }
 
 function diffById<T extends { id: string; name?: string }>(
@@ -203,9 +208,9 @@ export function compareToSnapshot(
     for (const a of wmA) if (!was.has(key(a.url))) wm.extra.push({ id: a.id, name: a.url, byTool: createdByTool.has(a.id) });
   }
   sections.push(wm);
-  const exB = before.objects.webScanningExclusions ?? [];
-  const exA = after.objects.webScanningExclusions ?? [];
-  sections.push(diffById("webScanningExclusions", exB.map((x) => ({ ...x, name: x.value })), exA.map((x) => ({ ...x, name: x.value })), (b, a) => (b.value === a.value && b.type === a.type ? [] : ["value"]), createdByTool, deletedByTool));
+  // Not read on either side (stored as null): nothing to compare, like every other section.
+  const named = (x: Snapshot["objects"]["webScanningExclusions"]) => x?.map((e) => ({ ...e, name: e.value })) ?? null;
+  sections.push(diffById("webScanningExclusions", named(before.objects.webScanningExclusions), named(after.objects.webScanningExclusions), (b, a) => (b.value === a.value && b.type === a.type ? [] : ["value"]), createdByTool, deletedByTool));
   const tls: SectionDiff = { section: "tlsDecryption", matched: 0, changed: [], missing: [], extra: [] };
   if (before.objects.tlsDecryption && after.objects.tlsDecryption) {
     const pick = (t: NonNullable<Snapshot["objects"]["tlsDecryption"]>) => canonicalJson({ categories: t.categories, excluded: t.excludedWebsiteItems });
@@ -214,8 +219,12 @@ export function compareToSnapshot(
   }
   sections.push(tls);
 
+  // A section either side couldn't read (stored as null) has nothing to compare.
+  const kinds = ["webControlPolicies", "serverWebControlPolicies", "threatProtectionWebSettings", "webFilteringProfiles", "siteLists", "websiteManagement", "webScanningExclusions", "tlsDecryption"] as const;
+  const unread = kinds.filter((k) => before.objects[k] == null || after.objects[k] == null);
+
   const othersCount = sections.reduce((n, s) => n + s.extra.filter((e) => !e.byTool).length + s.missing.filter((m) => !m.byTool).length, 0);
   const matches = sections.every((s) => s.changed.length === 0 && s.missing.every((m) => !m.byTool) && s.extra.every((e) => !e.byTool));
   const identical = sections.every((s) => s.changed.length === 0 && s.missing.length === 0 && s.extra.length === 0);
-  return { matches, identical, sections, othersCount };
+  return { matches, identical, sections, othersCount, unread };
 }

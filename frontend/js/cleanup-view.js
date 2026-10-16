@@ -3,7 +3,7 @@
 // table with filters, and per-entry decisions.
 
 import { api } from "./api.js";
-import { detailHtml, esc, escAttr } from "./ui.js";
+import { OUTCOME_TOAST, detailHtml, esc, escAttr, readBackParts, sentence } from "./ui.js";
 import { icon } from "./icons.js";
 import { toast } from "./toast.js";
 
@@ -103,14 +103,64 @@ export function tableHtml(results) {
   </section>`;
 }
 
+/** Why a list's read-back didn't confirm it, for a Detail line: what Sophos answered when it couldn't be read, else what was read. */
+function listReason(l) {
+  const back = readBackParts(l.readBack);
+  return `"${l.name}": ${sentence(back.detail || back.plain || "no read-back on record")}`;
+}
+
 /**
- * Why a create stopped, in plain words: which list failed, and that the
- * lists after it weren't sent. What Sophos answered goes on the Detail line.
+ * What a create did (category C): green only when every list was made and read back with the sites sent; amber when
+ * Sophos made lists but a read-back didn't confirm one, or a later list failed; red when none was made. Which list failed
+ * and that the lists after it weren't sent are in the message; what Sophos answered, and why a list isn't confirmed, on
+ * the Detail line.
  */
-function listsFailed(made, planned, failed) {
-  const notSent = planned - made - 1;
-  const rest = notSent > 0 ? `, so ${notSent === 1 ? "the list after it wasn't" : `the ${notSent} lists after it weren't`} sent` : "";
-  return `${made ? `${made} of ${planned} site lists created and read back.` : "No site lists created."} Creating "${failed.name}" failed${rest}.`;
+function listsOutcome(rec, planned) {
+  const made = rec.lists.filter((l) => l.status === "created");
+  const open = made.filter((l) => l.readBack !== "matches");
+  const failed = rec.lists.find((l) => l.status === "failed");
+  const lists = (k) => `${k} site ${k === 1 ? "list" : "lists"}`;
+  const confirmed = !open.length ? " and read back" : open.length === made.length ? ", not confirmed on read-back" : `, ${open.length} not confirmed on read-back`;
+  const reasons = open.map(listReason);
+  if (failed) {
+    const notSent = planned - made.length - 1;
+    const rest = notSent > 0 ? `, so ${notSent === 1 ? "the list after it wasn't" : `the ${notSent} lists after it weren't`} sent` : "";
+    return {
+      state: made.length ? "unconfirmed" : "failed",
+      text: `${made.length ? `${made.length} of ${lists(planned)} created${confirmed}.` : "No site lists created."} Creating "${failed.name}" failed${rest}.`,
+      reason: [sentence(failed.error ?? ""), ...reasons].filter(Boolean).join(" "),
+    };
+  }
+  if (!open.length) return { state: "confirmed", text: `${lists(made.length)} created and read back.`, reason: "" };
+  const which = open.length === 1 ? `"${open[0].name}"` : `${open.length} of them`;
+  return { state: "unconfirmed", text: `${lists(made.length)} created, but the read-back didn't confirm ${which}.`, reason: reasons.join(" ") };
+}
+
+/**
+ * What an undo did (category C): green only when every list read back gone (404); amber when Sophos accepted a delete
+ * but the read-back didn't confirm it, or some were deleted and others refused; red when every delete was refused.
+ * Why goes on the Detail line.
+ */
+function undoOutcome(rec) {
+  const rows = rec.lists.filter((l) => ["deleted", "still there after delete", "not confirmed", "in use by a profile, left", "delete failed"].includes(l.status));
+  const gone = rows.filter((l) => l.status === "deleted");
+  const open = rows.filter((l) => l.status === "still there after delete" || l.status === "not confirmed");
+  const refused = rows.filter((l) => l.status === "in use by a profile, left" || l.status === "delete failed");
+  const lists = (k) => `${k} site ${k === 1 ? "list" : "lists"}`;
+  const name = (xs, many) => (xs.length === 1 ? `"${xs[0].name}"` : many);
+  const why = (l) => (l.status === "in use by a profile, left" ? `"${l.name}" is in use by a profile, so it was left.${l.error ? ` ${sentence(l.error)}` : ""}` : `"${l.name}": ${sentence(l.error ?? "")}`);
+  if (!open.length && !refused.length) return { state: "confirmed", text: `Undone: ${gone.length === 1 ? `"${gone[0].name}" deleted` : `${lists(gone.length)} deleted`} and read back.`, reason: "" };
+  // A list that read back still there, or couldn't be read back, and why.
+  const openWhy = (l) => {
+    const back = readBackParts(l.readBack);
+    return back.detail ? `"${l.name}": ${sentence(back.detail)}` : `"${l.name}" was still there after the delete.`;
+  };
+  const reasons = [...refused.map(why), ...open.map(openWhy)].join(" ");
+  if (refused.length) {
+    const done = gone.length + open.length;
+    return { state: done ? "unconfirmed" : "failed", text: `Couldn't delete ${name(refused, `${refused.length} of the site lists`)}${gone.length ? `. ${lists(gone.length)} deleted and read back` : ""}${open.length ? `. ${open.length === 1 ? "One delete isn't" : `${open.length} deletes aren't`} confirmed` : ""}.`, reason: reasons };
+  }
+  return { state: "unconfirmed", text: `Sophos accepted the ${open.length + gone.length === 1 ? "delete" : "deletes"}, but the read-back didn't confirm ${name(open, `${open.length} of them`)}.`, reason: reasons };
 }
 
 /** Wires filters, search, decisions and list buttons. `endpoints` names the page's API paths. */
@@ -135,7 +185,7 @@ export function wireView(root, view, endpoints, rerender) {
         const next = await api.put(endpoints.decisions, { decisions: { [id]: decision } });
         rerender({ ...view, ...next });
       } catch (err) {
-        toast("Couldn't save the decision.", "warn", 8000, err.message);
+        toast("Couldn't save the decision.", OUTCOME_TOAST.failed, 8000, err.message);
       }
     }),
   );
@@ -149,23 +199,22 @@ export function wireView(root, view, endpoints, rerender) {
       const ok = window.confirm(`Dry run passed. Create ${plan.lists.length} site ${plan.lists.length === 1 ? "list" : "lists"} (${plan.lists.map((l) => `${l.name}: ${l.sites.length}`).join(", ")})? Each is read back and recorded in the audit log, and Undo deletes them.`);
       if (!ok) return;
       const rec = await api.post(endpoints.lists, { ...endpoints.listBody, dryRun: false });
-      const made = rec.lists.filter((l) => l.status === "created").length;
-      const failed = rec.lists.find((l) => l.status === "failed");
-      if (failed) toast(listsFailed(made, plan.lists.length, failed), "warn", 10000, failed.error);
-      else toast(`${made} site ${made === 1 ? "list" : "lists"} created and read back.`, made === rec.lists.length ? "ok" : "warn", 8000);
+      const o = listsOutcome(rec, plan.lists.length);
+      toast(o.text, OUTCOME_TOAST[o.state], o.state === "confirmed" ? 8000 : 10000, o.reason);
       rerender({ ...view, lastLists: rec });
     } catch (err) {
-      toast("Couldn't create the site lists.", "warn", 10000, err.message);
+      toast("Couldn't create the site lists.", OUTCOME_TOAST.failed, 10000, err.message);
     }
   });
   root.querySelector("#undo-lists")?.addEventListener("click", async () => {
     if (!window.confirm("Delete the site lists the last create made? Lists a profile uses are left.")) return;
     try {
       const rec = await api.post(endpoints.lists, { ...endpoints.listBody, undo: true });
-      toast(`Undo: ${rec.lists.map((l) => `${l.name} ${l.status}`).join(", ")}.`, "ok", 8000);
+      const o = undoOutcome(rec);
+      toast(o.text, OUTCOME_TOAST[o.state], o.state === "confirmed" ? 8000 : 10000, o.reason);
       rerender({ ...view, lastLists: rec });
     } catch (err) {
-      toast("Couldn't undo the site lists.", "warn", 10000, err.message);
+      toast("Couldn't undo the site lists.", OUTCOME_TOAST.failed, 10000, err.message);
     }
   });
 }

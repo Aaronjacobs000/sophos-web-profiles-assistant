@@ -4,7 +4,7 @@
 
 import { api } from "./api.js";
 import { currentTenantId, getStatus, initShell, setTenant } from "./shell.js";
-import { buildHeadline, detailHtml, errorBanner, esc, escAttr } from "./ui.js";
+import { OUTCOME_TAG, OUTCOME_TOAST, buildHeadline, detailHtml, errorBanner, esc, escAttr, sentence, unconfirmedReason } from "./ui.js";
 import { icon } from "./icons.js";
 import { toast } from "./toast.js";
 import { diffHtml } from "./diff-view.js";
@@ -18,13 +18,84 @@ let builds = [];
 let diff = null;
 
 const REASON = { "windows-old-agent": "Windows below 2026.1", "windows-no-agent-version": "no agent version", macos: "macOS", other: "other platform" };
-const STATUS_TAG = {
-  planned: '<span class="tag tag-muted">Dry run OK</span>',
-  created: '<span class="tag tag-ok">Created</span>',
-  failed: '<span class="tag tag-bad">Failed</span>',
-  deleted: '<span class="tag tag-muted">Rolled back</span>',
-  "delete-failed": '<span class="tag tag-bad">Delete failed</span>',
-};
+const KIND = { "site-list": "Site list", profile: "Profile", policy: "Policy" };
+const READ_BACK = { matches: "matches", differs: "differs", "not-read": "not read" };
+
+/**
+ * A step's tag and the plain line under it (category C): Created is green only when the read-back matched what was
+ * sent; amber when Sophos made it, or accepted its delete, but the read-back didn't confirm it; red when it failed.
+ * How it differed, or why it couldn't be read, goes on the Detail line.
+ */
+function stepState(s, rec) {
+  const tag = (cls, label) => `<span class="tag ${cls}">${label}</span>`;
+  // What the last rollback found for this step: why its delete failed, when it did.
+  const rolled = rec.rollback?.steps.find((o) => o.id && o.id === s.id);
+  switch (s.status) {
+    case "planned":
+      return { tag: tag("tag-muted", "Dry run OK") };
+    case "created":
+      if (s.readBack === "matches") return { tag: tag(OUTCOME_TAG.confirmed, "Created") };
+      return {
+        tag: tag(OUTCOME_TAG.unconfirmed, "Not confirmed"),
+        note: s.readBack === "differs" ? "Sophos made it, but it didn't read back as sent." : s.readBack === "not-read" ? "Sophos made it, but the tool couldn't read it back, so it isn't confirmed." : "Sophos made it, but it isn't confirmed.",
+        detail: s.readBackNote ?? (s.readBack ? "" : "No read-back on record."),
+      };
+    case "failed":
+      return { tag: tag(OUTCOME_TAG.failed, "Failed"), note: s.error ? "This step failed, so the build stopped here." : "", detail: s.error };
+    case "deleted":
+      return { tag: tag("tag-muted", "Rolled back") };
+    case "delete-failed":
+      return s.deleteReadBack
+        ? { tag: tag(OUTCOME_TAG.unconfirmed, "Delete not confirmed"), note: "Sophos accepted the delete, but the read-back didn't confirm it's gone. Roll back again, or check it in Sophos Fusion.", detail: unconfirmedReason(s.deleteReadBack) }
+        : { tag: tag(OUTCOME_TAG.failed, "Delete failed"), note: rolled?.error ? "The delete failed. Roll back again, or check it in Sophos Fusion." : "", detail: rolled?.error };
+    default:
+      return { tag: "" };
+  }
+}
+
+/** What a step's read-back didn't confirm, for the Detail line of a message. */
+function stepReason(s) {
+  return `${KIND[s.kind] ?? "Object"} "${s.name}": ${s.readBackNote ? sentence(s.readBackNote) : s.readBack === "differs" ? "it didn't read back as sent." : "no read-back on record."}`;
+}
+
+/**
+ * A build's outcome (category C): green only when every object it made read back as sent; amber when it built but a
+ * read-back didn't confirm an object, or it stopped part way; red when it made nothing. The reason goes on the Detail line.
+ */
+function buildOutcome(rec) {
+  const created = rec.steps.filter((s) => s.status === "created");
+  if (rec.status === "built") {
+    const open = created.filter((s) => s.readBack !== "matches");
+    if (!open.length) return { state: "confirmed", text: "Built and read back.", reason: "" };
+    const which = open.length === 1 ? `the ${(KIND[open[0].kind] ?? "object").toLowerCase()} "${open[0].name}"` : `${open.length} of the ${created.length} objects`;
+    return { state: "unconfirmed", text: `Built, but the read-back didn't confirm ${which}.`, reason: open.map(stepReason).join(" ") };
+  }
+  const failed = rec.steps.find((s) => s.status === "failed");
+  const check = rec.checks.find((c) => !c.ok);
+  const reason = failed?.error ? sentence(failed.error) : check ? [check.text, check.detail].filter(Boolean).map(sentence).join(" ") : "";
+  return { state: created.length ? "unconfirmed" : "failed", text: `${buildHeadline(rec)}.`, reason };
+}
+
+/**
+ * A rollback's outcome (category C): green only when every object read back gone and Website Management read back as
+ * the snapshot has it; amber when Sophos accepted part or all of it but a read-back didn't confirm it; red when nothing
+ * it sent went through. The reason goes on the Detail line.
+ */
+function rollbackOutcome(rec) {
+  if (rec.status === "rolled-back") return { state: "confirmed", text: `${buildHeadline(rec)}.`, reason: "" };
+  const steps = rec.rollback?.steps ?? [];
+  const failed = steps.find((o) => o.status === "failed");
+  const open = steps.find((o) => o.status === "not confirmed" || o.status === "still there after delete");
+  const why = (o) => `${o.name}: ${sentence(o.error ?? "It was still there after the delete.")}`;
+  if (!failed && open) return { state: "unconfirmed", text: "Sophos accepted the rollback, but the read-back didn't confirm all of it.", reason: why(open) };
+  return { state: steps.some((o) => o.status !== "failed") ? "unconfirmed" : "failed", text: `${buildHeadline(rec)}.`, reason: failed ? why(failed) : open ? why(open) : "" };
+}
+
+/** Says what a build or rollback did, and that the list of builds couldn't be read after it when that failed: amber at best, with both reasons. */
+function outcomeToast(o, listError, what) {
+  if (listError === undefined) return toast(o.text, OUTCOME_TOAST[o.state], o.state === "confirmed" ? 9000 : 10000, o.reason);
+  toast(`${o.text} The list of builds couldn't be read again, so it doesn't show ${what} yet.`, OUTCOME_TOAST[o.state === "failed" ? "failed" : "unconfirmed"], 10000, [o.reason, sentence(listError)].filter(Boolean).join(" "));
+}
 
 function pilotFromForm() {
   const f = main.querySelector("#pilot");
@@ -40,10 +111,13 @@ function pilotFromForm() {
 function stepsHtml(rec) {
   return `<ol class="steps-list">${rec.steps
     .map(
-      (s) => `<li><span class="s-n">${s.order}</span><div><div class="s-name">${esc(s.kind === "site-list" ? "Site list" : s.kind === "profile" ? "Profile" : "Policy")} "${esc(s.name)}"</div>
-        <div class="s-sum">${esc(s.summary)}${s.readBack ? `. Read back: ${esc(s.readBack)}` : ""}${s.note ? `. ${esc(s.note)}` : ""}</div>
-        ${s.error ? `<span class="err-note">This step failed, so the build stopped here.</span>${detailHtml(s.error)}` : ""}
-        <div class="s-path">${s.method} ${esc(s.path)}${s.id ? `  ${esc(s.id)}` : ""}</div></div>${STATUS_TAG[s.status] ?? ""}</li>`,
+      (s) => {
+        const st = stepState(s, rec);
+        return `<li><span class="s-n">${s.order}</span><div><div class="s-name">${esc(KIND[s.kind] ?? "Policy")} "${esc(s.name)}"</div>
+        <div class="s-sum">${esc(s.summary)}${s.readBack ? `. Read back: ${esc(READ_BACK[s.readBack] ?? s.readBack)}` : ""}${s.note ? `. ${esc(s.note)}` : ""}</div>
+        ${st.note ? `<span class="err-note">${st.note}</span>` : ""}${detailHtml(st.detail)}
+        <div class="s-path">${s.method} ${esc(s.path)}${s.id ? `  ${esc(s.id)}` : ""}</div></div>${st.tag}</li>`;
+      },
     )
     .join("")}</ol>`;
 }
@@ -131,21 +205,21 @@ function render() {
     try {
       lastPlan = await api.post(`/api/build/${t}/execute`, pilotFromForm());
     } catch (err) {
-      toast("Couldn't build the pilot.", "warn", 10000, err.message);
+      toast("Couldn't build the pilot.", OUTCOME_TOAST.failed, 10000, err.message);
       render();
       return;
     }
     // The build has answered. A read of the builds list after it that fails doesn't change what the build did, so the toast says both.
-    const outcome = lastPlan.status === "built" ? "Built and read back." : `${buildHeadline(lastPlan)}.`;
+    const outcome = buildOutcome(lastPlan);
     try {
       builds = (await api.get(`/api/build/${t}`)).items;
     } catch (err) {
       render();
-      toast(`${outcome} The list of builds couldn't be read again, so it doesn't show this build yet.`, "warn", 10000, err.message);
+      outcomeToast(outcome, err.message, "this build");
       return;
     }
     render();
-    toast(outcome, lastPlan.status === "built" ? "ok" : "warn", 9000);
+    outcomeToast(outcome);
   });
   main.querySelectorAll("[data-rollback]").forEach((b) =>
     b.addEventListener("click", async () => {
@@ -155,12 +229,21 @@ function render() {
         const wm = plan.restorePlan?.length ?? 0;
         if (!window.confirm(`Roll back: delete ${objs.map((s) => `${s.kind} "${s.name}"`).join(", ")} in that order${wm ? `, and ${wm} Website Management changes from the snapshot` : ""}?${plan.restoreRefused ? `\n\n${plan.restoreRefused}` : ""}`)) return;
         lastPlan = await api.post(`/api/build/${t}/${b.dataset.rollback}/rollback`, { dryRun: false });
-        builds = (await api.get(`/api/build/${t}`)).items;
-        render();
-        toast(`${buildHeadline(lastPlan)}.`, lastPlan.status === "rolled-back" ? "ok" : "warn", 9000);
       } catch (err) {
-        toast("Couldn't roll back the build.", "warn", 10000, err.message);
+        toast("Couldn't roll back the build.", OUTCOME_TOAST.failed, 10000, err.message);
+        return;
       }
+      // The rollback has answered. A read of the builds list after it that fails doesn't change what the rollback did, so the toast says both.
+      const outcome = rollbackOutcome(lastPlan);
+      try {
+        builds = (await api.get(`/api/build/${t}`)).items;
+      } catch (err) {
+        render();
+        outcomeToast(outcome, err.message, "the rollback");
+        return;
+      }
+      render();
+      outcomeToast(outcome);
     }),
   );
   main.querySelectorAll("[data-diff]").forEach((b) =>

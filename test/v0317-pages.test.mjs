@@ -128,10 +128,11 @@ test("Waves moved rows say a failure plainly, with Sophos's answer and an unread
       assert.deepEqual(
         await b.evaluate(ROWS),
         [
-          { devs: "EXAMPLE-PC-01. Read back: not read", note: "The move didn't finish.", detail: `Detail: ${UNREAD}. ${RAW}.`, inside: true },
+          // From v0.3.19 a wave with a read-back was accepted by Sophos: not confirmed, with why the read-back couldn't read on the Detail line.
+          { devs: "EXAMPLE-PC-01. Read back: not read", note: "Sophos accepted the move, but the read-back didn't confirm it. Check the pilot in Sophos Fusion.", detail: DETAIL(UNREAD), inside: true },
           { devs: "EXAMPLE-PC-02. Read back: assignment matches", note: "The undo didn't finish. Undo again, or check the pilot in Sophos Fusion.", detail: DETAIL(RAW), inside: true },
           { devs: "EXAMPLE-PC-03. Read back: assignment back as before the wave", note: null, detail: null, inside: true },
-          { devs: "EXAMPLE-PC-04. Read back: not read", note: null, detail: DETAIL(UNREAD), inside: true },
+          { devs: "EXAMPLE-PC-04. Read back: not read", note: "Sophos accepted the move, but the read-back didn't confirm it. Check the pilot in Sophos Fusion.", detail: DETAIL(UNREAD), inside: true },
         ],
         `${width} px`,
       );
@@ -201,7 +202,7 @@ test("banners say what failed in plain words, with the raw answer on the banner'
     { name: "Credentials: the saved credential doesn't connect", url: "/credentials.html", ready: "#main .banner-err", status: { ...status, status: "configured-invalid", error: RAW, tenant: null }, routes: credsRoutes, banner: "#main .banner-err", text: "The saved credential didn't connect." },
     { name: "Credentials: the page can't be read", url: "/credentials.html", ready: "#main .banner-err", routes: { "GET /api/credentials": fail(500), "GET /api/intelix": intelixView }, banner: "#main .banner-err", text: "Couldn't read the saved credentials." },
     { name: "Setup: Test", url: "/welcome.html", ready: "#to-2", routes: { "POST /api/credentials/test": fail(400) }, steps: [click("#to-2"), `(() => { const f = document.querySelector("#cred-form"); f.clientId.value = "mock-client-id"; f.clientSecret.value = "mock-client-secret"; return true; })()`, click("#test")], banner: "#test-result .banner", text: "The credential didn't connect." },
-    { name: "Setup: Save, refused", url: "/welcome.html", ready: "#to-2", routes: { "POST /api/credentials/test": { ok: true, idType: "tenant", tenant }, "PUT /api/credentials": { ok: true, status: { ...status, status: "configured-invalid", error: RAW } } }, steps: [click("#to-2"), `(() => { const f = document.querySelector("#cred-form"); f.clientId.value = "mock-client-id"; f.clientSecret.value = "mock-client-secret"; return true; })()`, click("#test"), `(async () => { for (let i = 0; i < 50 && document.querySelector("#to-3").disabled; i++) await new Promise((r) => setTimeout(r, 100)); document.querySelector("#to-3").click(); return true; })()`, click("#save")], banner: "#review .banner-err", text: "Saved, but the credential didn't connect." },
+    { name: "Setup: Save, refused", url: "/welcome.html", ready: "#to-2", routes: { "POST /api/credentials/test": { ok: true, idType: "tenant", tenant }, "PUT /api/credentials": { ok: true, status: { ...status, status: "configured-invalid", error: RAW } } }, steps: [click("#to-2"), `(() => { const f = document.querySelector("#cred-form"); f.clientId.value = "mock-client-id"; f.clientSecret.value = "mock-client-secret"; return true; })()`, click("#test"), `(async () => { for (let i = 0; i < 50 && document.querySelector("#to-3").disabled; i++) await new Promise((r) => setTimeout(r, 100)); document.querySelector("#to-3").click(); return true; })()`, click("#save")], banner: "#review .banner-warn", text: "Saved, but the credential didn't connect." },
     { name: "Readiness: Run", url: `/readiness.html?tenant=${T}`, ready: "#run", routes: { [`GET /api/readiness/${T}`]: readiness(null), [`POST /api/readiness/${T}/run`]: fail(502) }, steps: [click("#run")], banner: "#main .banner-err", text: "The check didn't finish." },
     { name: "Readiness: load", url: `/readiness.html?tenant=${T}`, ready: "#main .banner-err", routes: { [`GET /api/readiness/${T}`]: fail(404) }, banner: "#main .banner-err", text: "Couldn't read the readiness check for this tenant." },
     { name: "Build: load", url: `/build.html?tenant=${T}`, ready: "#main .banner-err", routes: { [`GET /api/design/${T}`]: fail(502), [`GET /api/pilot-targets/${T}`]: { endpoints: [], endpointGroups: [], userGroups: [] }, [`GET /api/build/${T}`]: { items: [] } }, banner: "#main .banner-err", text: "Couldn't read the design and pilot targets." },
@@ -292,7 +293,7 @@ test("Allow entries: no stray separator before a failed Allow's date, an unread 
         await b.evaluate(ROWS),
         [
           { sub: day, note: "The Allow didn't finish.", detail: DETAIL(RAW), inside: true },
-          { sub: `Example allows · ${day} · not read`, note: null, detail: DETAIL(UNREAD), inside: true },
+          { sub: `Example allows · ${day} · not read`, note: "Sophos accepted the Allow, but the read-back didn't confirm it.", detail: DETAIL(UNREAD), inside: true },
           { sub: `Example allows · ${day} · site listed`, note: null, detail: null, inside: true },
         ],
         `${width} px`,

@@ -4,7 +4,7 @@
 
 import { api } from "./api.js";
 import { currentTenantId, getStatus, initShell, setTenant } from "./shell.js";
-import { esc, escAttr, readBackParts, relTime, rollbackUnfinishedBanner, sentence } from "./ui.js";
+import { OUTCOME_TAG, OUTCOME_TOAST, esc, escAttr, readBackParts, relTime, rollbackUnfinishedBanner, sentence, unconfirmedReason } from "./ui.js";
 import { icon } from "./icons.js";
 import { toast } from "./toast.js";
 
@@ -17,10 +17,34 @@ let pilotOnly = false;
 
 const n = (x) => Number(x ?? 0).toLocaleString("en-US");
 const when = (iso) => (iso ? new Date(iso).toLocaleString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "");
-const ALLOW_STATUS = { added: '<span class="tag tag-ok">Added</span>', undone: '<span class="tag tag-muted">Undone</span>', failed: '<span class="tag tag-bad">Failed</span>', "undo-failed": '<span class="tag tag-bad">Undo failed</span>' };
-// The plain line on an Allow entry that failed; what Sophos or the tool answered goes on the Detail line under it. An entry
-// added or undone has nothing to fix, so an error left from an earlier undo that failed isn't shown on it.
-const ALLOW_ERROR = { failed: "The Allow didn't finish.", "undo-failed": "The undo didn't finish. Undo again, or check the list in Sophos Fusion." };
+
+/**
+ * An Allow entry's row (category C): green only when the read-back confirmed the Allow; amber when Sophos accepted the
+ * Allow or its undo but the read-back didn't confirm it; red when it failed. The plain line goes under the site, and why
+ * on the Detail line. An entry undone has nothing to fix, so an error left from an earlier undo that failed isn't shown.
+ */
+function allowRow(a) {
+  const tag = (cls, label) => `<span class="tag ${cls}">${label}</span>`;
+  // An entry that failed keeps why its read-back couldn't read the list, if it got that far, with its error.
+  const withError = [readBackParts(a.readBack).detail, a.error].filter(Boolean).map(sentence).join(" ");
+  switch (a.status) {
+    case "added":
+      if (a.buildStatus === "rolled-back") return { tag: tag("tag-muted", "Removed with the build") };
+      return allowConfirmed(a.readBack)
+        ? { tag: tag(OUTCOME_TAG.confirmed, "Added") }
+        : { tag: tag(OUTCOME_TAG.unconfirmed, "Not confirmed"), note: "Sophos accepted the Allow, but the read-back didn't confirm it.", detail: unconfirmedReason(a.readBack) };
+    case "failed":
+      return { tag: tag(OUTCOME_TAG.failed, "Failed"), note: "The Allow didn't finish.", detail: withError };
+    case "undone":
+      return { tag: tag("tag-muted", "Undone") };
+    case "undo-failed":
+      return a.undoReadBack
+        ? { tag: tag(OUTCOME_TAG.unconfirmed, "Undo not confirmed"), note: "Sophos accepted the undo, but the read-back didn't confirm it. Undo again, or check the list in Sophos Fusion.", detail: unconfirmedReason(a.undoReadBack, a.error) }
+        : { tag: tag(OUTCOME_TAG.failed, "Undo failed"), note: "The undo didn't finish. Undo again, or check the list in Sophos Fusion.", detail: withError };
+    default:
+      return { tag: "" };
+  }
+}
 
 function pilotCard() {
   const p = view.pilot;
@@ -74,13 +98,14 @@ function allowsCard() {
   const earlier = view.allows.length - current.length;
   const rows = current
     .map((a) => {
-      // A read-back that couldn't read the list says "not read" in the sub-line; why goes on the Detail line, with the error of an entry that failed.
+      // A read-back that couldn't read the list says "not read" in the sub-line; why goes on the Detail line.
       const back = readBackParts(a.readBack);
-      const failed = ALLOW_ERROR[a.status] && a.error;
-      const detail = [back.detail, failed ? a.error : ""].filter(Boolean).map(sentence).join(" ");
+      const row = allowRow(a);
+      const detail = sentence(row.detail ?? "");
       // An Allow that failed before it had a list has no list name, so the sub-line starts with the date.
       const sub = [esc(a.listName || ""), when(a.at), esc(back.plain)].filter(Boolean).join(" · ");
-      return `<li><span class="o-name">${esc(a.site)}<span class="o-kind">${sub}</span>${failed ? `<span class="o-note">${ALLOW_ERROR[a.status]}</span>` : ""}${detail ? `<span class="o-detail" data-allow-detail>Detail: ${esc(detail)}</span>` : ""}</span><span class="o-meta">${a.status === "added" && a.buildStatus === "rolled-back" ? '<span class="tag tag-muted">Removed with the build</span>' : `${ALLOW_STATUS[a.status] ?? ""}${["added", "undo-failed"].includes(a.status) ? ` <button class="btn btn-small" data-undo="${escAttr(a.id)}">Undo</button>` : ""}`}</span></li>`;
+      const undo = !(a.status === "added" && a.buildStatus === "rolled-back") && ["added", "undo-failed"].includes(a.status);
+      return `<li><span class="o-name">${esc(a.site)}<span class="o-kind">${sub}</span>${row.note ? `<span class="o-note">${row.note}</span>` : ""}${detail ? `<span class="o-detail" data-allow-detail>Detail: ${esc(detail)}</span>` : ""}</span><span class="o-meta">${row.tag}${undo ? ` <button class="btn btn-small" data-undo="${escAttr(a.id)}">Undo</button>` : ""}</span></li>`;
     })
     .join("");
   return `<section class="panel-card"><h2>Allow entries</h2>${rows ? `<ul class="order-list">${rows}</ul>` : '<p class="muted">None yet. Allow a host from the sites table.</p>'}${earlier ? `<p class="hint">${earlier} more ${earlier === 1 ? "entry belongs" : "entries belong"} to earlier builds.</p>` : ""}</section>`;
@@ -100,6 +125,8 @@ function tiles() {
 // What a read-back says when it confirms an Allow: the site in the list, and a new list linked to the profile.
 const CONFIRMED = new Set(["site listed", "list holds the site", "profile links it as allow"]);
 const allowConfirmed = (readBack) => !!readBack && String(readBack).split("; ").every((part) => CONFIRMED.has(part));
+// What an undo's notes say when its read-backs confirm it.
+const UNDO_CONFIRMED = new Set(["Profile read back without the list.", "List deleted, 404 on read-back.", "Site removed, confirmed on read-back."]);
 
 // A Collect now that failed, whether the request was refused or the collection itself failed; the toast's detail line says why.
 const COLLECT_FAILED = "Couldn't collect events.";
@@ -269,13 +296,14 @@ function allowModal(plan) {
       const r = await api.post(`/api/pilot/${encodeURIComponent(tenantId)}/allow`, { host: plan.host, dryRun: false });
       close();
       const back = readBackParts(r.entry.readBack);
-      // Green only when the read-back confirmed the Allow; a list that couldn't be read, or a read-back without the site or link, leaves it unconfirmed.
-      if (allowConfirmed(r.entry.readBack)) toast(`Allowed ${r.entry.site}: ${back.plain}.`, "ok", 9000);
-      else if (back.detail) toast(`Sophos accepted the Allow for ${r.entry.site}, but the list couldn't be read back, so it isn't confirmed.`, "warn", 10000, back.detail);
-      else toast(`Sophos accepted the Allow for ${r.entry.site}, but the read-back didn't confirm it: ${back.plain}.`, "warn", 10000);
+      // Green only when the read-back confirmed the Allow; a list that couldn't be read, or a read-back without the site or link, leaves it
+      // unconfirmed, with what was read (or why it couldn't be) on the Detail line.
+      if (allowConfirmed(r.entry.readBack)) toast(`Allowed ${r.entry.site}: ${back.plain}.`, OUTCOME_TOAST.confirmed, 9000);
+      else if (back.detail) toast(`Sophos accepted the Allow for ${r.entry.site}, but the list couldn't be read back, so it isn't confirmed.`, OUTCOME_TOAST.unconfirmed, 10000, back.detail);
+      else toast(`Sophos accepted the Allow for ${r.entry.site}, but the read-back didn't confirm it.`, OUTCOME_TOAST.unconfirmed, 10000, unconfirmedReason(r.entry.readBack));
       await reread();
     } catch (err) {
-      toast(`Couldn't allow ${plan.site ?? plan.host}.`, "warn", 10000, err.message);
+      toast(`Couldn't allow ${plan.site ?? plan.host}.`, OUTCOME_TOAST.failed, 10000, err.message);
       close();
       await reread();
     }
@@ -303,9 +331,9 @@ function wire() {
     try {
       const data = JSON.parse(await file.text());
       const r = await api.post(`/api/pilot/${t}/import`, { label: file.name, data });
-      toast(`Imported ${n(r.added)} new web events from ${file.name}.`, "ok", 8000);
+      toast(`Imported ${n(r.added)} new web events from ${file.name}.`, OUTCOME_TOAST.confirmed, 8000);
     } catch (err) {
-      toast(`Couldn't import events from ${file.name}.`, "warn", 9000, err.message);
+      toast(`Couldn't import events from ${file.name}.`, OUTCOME_TOAST.failed, 9000, err.message);
     }
     await reread();
   });
@@ -314,12 +342,16 @@ function wire() {
     const on = box.checked;
     try {
       const saved = await api.put(`/api/pilot/${t}/schedule`, { enabled: on });
-      view.store.state.enabled = saved?.enabled ?? on;
-      toast(on ? "Collection is on while the tool runs." : "Collection is off.", "ok", 5000);
+      // The message says what the server saved, which is what the box shows from here.
+      const now = typeof saved?.enabled === "boolean" ? saved.enabled : on;
+      view.store.state.enabled = now;
+      box.checked = now;
+      if (now === on) toast(now ? "Collection is on while the tool runs." : "Collection is off.", OUTCOME_TOAST.confirmed, 5000);
+      else toast(`The setting saved is ${now ? "on" : "off"}, not ${on ? "on" : "off"}.`, OUTCOME_TOAST.unconfirmed, 9000, `The server saved collection as ${now ? "on" : "off"}.`);
     } catch (err) {
       // Not saved: the box shows the setting on file again.
       box.checked = view.store.state.enabled;
-      toast(`Couldn't turn collection ${on ? "on" : "off"}, so it's still ${view.store.state.enabled ? "on" : "off"}.`, "warn", 9000, err.message);
+      toast(`Couldn't turn collection ${on ? "on" : "off"}, so it's still ${view.store.state.enabled ? "on" : "off"}.`, OUTCOME_TOAST.failed, 9000, err.message);
     }
   });
   main.querySelector("#days").addEventListener("change", async (e) => {
@@ -349,10 +381,13 @@ function wire() {
       b.disabled = true;
       try {
         const r = await api.post(`/api/pilot/${t}/allow/${encodeURIComponent(b.dataset.undo)}/undo`, {});
-        if (r.status === "undone") toast(`Undone. ${(r.undo ?? []).join(" ")}`, "ok", 9000);
-        else toast(`Couldn't undo the Allow for ${a?.site}.`, "warn", 9000, r.error);
+        const notes = r.undo ?? [];
+        // Green only when every read-back confirmed the undo; an undo read-back on record means Sophos accepted it.
+        if (r.status === "undone" && notes.length && notes.every((x) => UNDO_CONFIRMED.has(x))) toast(`Undone. ${notes.join(" ")}`, OUTCOME_TOAST.confirmed, 9000);
+        else if (r.status === "undone" || r.undoReadBack) toast(`Sophos accepted the undo for ${a?.site}, but the read-back didn't confirm it.`, OUTCOME_TOAST.unconfirmed, 10000, unconfirmedReason(r.undoReadBack, notes.filter((x) => !UNDO_CONFIRMED.has(x)).join(" ") || r.error));
+        else toast(`Couldn't undo the Allow for ${a?.site}.`, OUTCOME_TOAST.failed, 9000, r.error);
       } catch (err) {
-        toast(`Couldn't undo the Allow for ${a?.site}.`, "warn", 9000, err.message);
+        toast(`Couldn't undo the Allow for ${a?.site}.`, OUTCOME_TOAST.failed, 9000, err.message);
       }
       await reread();
     }),

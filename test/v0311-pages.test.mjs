@@ -39,7 +39,8 @@ test("the note on an unfinished rollback says so plainly, with Sophos's reason o
       return b.evaluate(`(() => { const k = document.querySelector(".banner-warn").cloneNode(true); const d = k.querySelector("[data-error-detail]"); d?.remove(); return { text: k.textContent.replace(/\\s+/g, " ").trim(), detail: d?.textContent.trim() ?? null }; })()`);
     };
     assert.deepEqual(await banner(), {
-      text: `The rollback didn't finish. Still in the tenant: the policy "WF pilot: Example profile". Roll it back again from the Build page, or carry on with the pilot.`,
+      // From v0.3.19 "may still be": a delete Sophos accepted but no read-back confirmed may have gone through.
+      text: `The rollback didn't finish. These may still be in the tenant: the policy "WF pilot: Example profile". Roll it back again from the Build page, or carry on with the pilot.`,
       detail: "Detail: Sophos API error 500: InternalServerError.",
     });
     // A reason that already ends a sentence keeps its own stop.
@@ -162,20 +163,21 @@ test("retire records and the messages after a retire or restore say each status 
   try {
     b = await openBrowser();
     await b.open(`${base}/promote.html?tenant=${T}`, 1440, "[data-restore]");
-    const rows = await b.evaluate(`(() => { const c = [...document.querySelectorAll(".panel-card")].find((s) => s.querySelector("h2")?.textContent === "Retired"); return [...c.querySelectorAll("tbody tr")].map((tr) => [tr.children[2].textContent.trim(), tr.children[3].textContent.trim()]); })()`);
+    // The steps in plain words, and, from v0.3.19, why a record didn't finish or isn't confirmed on its Detail line.
+    const rows = await b.evaluate(`(() => { const c = [...document.querySelectorAll(".panel-card")].find((s) => s.querySelector("h2")?.textContent === "Retired"); return [...c.querySelectorAll("tbody tr")].map((tr) => { const steps = tr.children[3].cloneNode(true); const d = steps.querySelector("[data-error-detail]"); d?.remove(); return [tr.children[2].textContent.trim(), steps.textContent.trim(), d?.textContent ?? null]; }); })()`);
     assert.deepEqual(rows, [
-      ["Restore didn't finish", "Base Policy: restore failed (tags differ); blocked.example.com: restored"],
-      ["Retire failed", "Base Policy: failed; blocked.example.com: not sent"],
-      ["Retire didn't finish", "Base Policy: done (tags match); blocked.example.com: failed"],
-      ["Restored", "Base Policy: restored"],
-      ["Retired", "Base Policy: done"],
+      ["Restore not confirmed", "Base Policy: restore not confirmed (tags differ); blocked.example.com: restored", "Detail: Base Policy: Read back: tags differ."],
+      ["Retire failed", "Base Policy: failed; blocked.example.com: not sent", "Detail: Base Policy: Sophos API error 403: Forbidden."],
+      ["Retire didn't finish", "Base Policy: done (tags match); blocked.example.com: failed", null],
+      ["Restored", "Base Policy: restored", null],
+      ["Retired", "Base Policy: done", null],
     ]);
     const lastToast = async () => {
       await b.evaluate(`window.confirm = () => true; document.querySelectorAll(".toast").forEach((t) => t.remove()); document.querySelector("[data-restore]").click(); true`);
       await b.waitFor(".toast");
-      return b.evaluate(`[...document.querySelectorAll(".toast")].pop().textContent`);
+      return b.evaluate(`(() => { const t = [...document.querySelectorAll(".toast")].pop().cloneNode(true); t.querySelector("[data-toast-detail]")?.remove(); return t.textContent; })()`);
     };
-    assert.equal(await lastToast(), "Restore didn't finish.");
+    assert.equal(await lastToast(), "Sophos accepted the restore, but the read-back didn't confirm all of it.");
     restoredTo = "restored";
     assert.equal(await lastToast(), "Restored.");
   } finally {

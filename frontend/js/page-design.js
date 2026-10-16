@@ -61,7 +61,7 @@ function render(data) {
         render(await api.put(`/api/design/${t}`, { genAi }));
         toast("Generative AI choice saved.", "ok");
       } catch (err) {
-        toast("Couldn't save the Generative AI choice.", "warn", 8000, err.message);
+        toast("Couldn't save the Generative AI choice.", "err", 8000, err.message);
       }
     }),
   );

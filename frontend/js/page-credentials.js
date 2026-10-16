@@ -87,7 +87,8 @@ async function render() {
         toast("Saved and connected.", "ok");
         window.location.href = "/";
       } else {
-        main.querySelector("#out").innerHTML = errorBanner("Saved, but the credential didn't connect.", r.status.error);
+        // Saved, so not red: the save worked and the check after it didn't confirm the credential.
+        main.querySelector("#out").innerHTML = errorBanner("Saved, but the credential didn't connect.", r.status.error, "warn");
       }
     } catch (err) {
       main.querySelector("#out").innerHTML = errorBanner("Couldn't save the credential.", err.message);
