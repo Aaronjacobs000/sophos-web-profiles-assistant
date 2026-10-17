@@ -247,7 +247,8 @@ test("a wave Sophos accepted whose read-back couldn't read the policy is not con
   tenant.refuse("GET", new RegExp(`/policies/${policyId}$`), 503, afterWrite(tenant));
   const w = await moveWave(dataDir, ctx, ["w2"], false);
   assert.deepEqual(tenant.policies.get(policyId).appliesTo.endpoints, ["w1", "w2"], "Sophos made the change");
-  assert.equal(w.status, "failed");
+  // From v0.3.20 (category D) such a wave is kept as unconfirmed, not failed, so it can be undone.
+  assert.equal(w.status, "unconfirmed");
   assert.equal(w.readBack, `not read: ${UNAVAILABLE}`);
   assert.equal(w.error, "The tool couldn't read the pilot policy back, so the move isn't confirmed.");
 });
@@ -458,8 +459,9 @@ test("a retire step Sophos accepted whose read-back couldn't read it is 'not rea
   const { tenant, pol } = await retireTenant(dataDir);
   tenant.refuse("GET", new RegExp(`/policies/${pol.id}$`), 503, afterWrite(tenant));
   const rec = await retire(dataDir, ctxOf(tenant), ["old"], true, TOOL);
-  assert.equal(rec.status, "failed");
-  assert.deepEqual([rec.steps[0].status, rec.steps[0].readBack, rec.steps[0].error], ["failed", `not read: ${UNAVAILABLE}`, "The tool couldn't read it back, so the change isn't confirmed."]);
+  // From v0.3.20 (category D) the step is kept as unconfirmed and the retire goes on.
+  assert.equal(rec.status, "partial");
+  assert.deepEqual([rec.steps[0].status, rec.steps[0].readBack, rec.steps[0].error], ["unconfirmed", `not read: ${UNAVAILABLE}`, "The tool couldn't read it back, so the change isn't confirmed."]);
   assert.deepEqual(tenant.policies.get(pol.id).settings["endpoint.web-control.tags.settings"].value, [{ tag: "keep", action: "block" }], "Sophos made the change");
 });
 
@@ -469,7 +471,7 @@ test("a retired entry whose read-back after the delete answers other than 404 is
   tenant.refuse("GET", /\/local-sites\/[^/]+$/, 503, () => tenant.calls.some((c) => c.startsWith("DELETE ")));
   const rec = await retire(dataDir, ctxOf(tenant), ["old"], true, TOOL);
   const del = rec.steps.find((s) => s.op === "delete-entry");
-  assert.deepEqual([del.status, del.readBack, del.error], ["failed", `not read: ${UNAVAILABLE}`, "The tool couldn't read it back, so the change isn't confirmed."]);
+  assert.deepEqual([del.status, del.readBack, del.error], ["unconfirmed", `not read: ${UNAVAILABLE}`, "The tool couldn't read it back, so the change isn't confirmed."]);
 });
 
 test("a restore keeps only its own read-back: a re-created entry it couldn't read back is not confirmed, not failed with the read's error", async () => {

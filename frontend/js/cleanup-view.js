@@ -30,8 +30,14 @@ export function summaryHtml(summary) {
     </div>`;
 }
 
+// A delete an undo couldn't confirm can be sent again (category D), like a list the create made.
+const OPEN_DELETE = ["not confirmed", "still there after delete"];
+
 export function listsHtml(view, base) {
   const lists = view.lists ?? [];
+  const last = view.lastLists?.lists ?? [];
+  const made = last.some((l) => l.status === "created");
+  const open = last.filter((l) => OPEN_DELETE.includes(l.status));
   const cards = lists
     .map(
       (l, i) => `<div class="cu-list"><span class="tag ${ACTION_TAG[l.action]}">${esc(l.action)}</span><div><b>${esc(l.name)}</b><span class="hint">${n(l.sites)} ${l.sites === 1 ? "site" : "sites"}</span></div><a class="btn btn-small" href="${base}/${i}.csv">${icon("download")}CSV</a></div>`,
@@ -41,8 +47,9 @@ export function listsHtml(view, base) {
     <div class="cu-list-actions">
       <a class="btn" href="${base}/results.csv">${icon("download")}All results (CSV)</a>
       ${view.canCreate ? `<button class="btn btn-soft" id="create-lists"${lists.length ? "" : " disabled"}>${icon("play")}Create site lists</button>` : ""}
-      ${view.lastLists?.lists?.some((l) => l.status === "created") ? '<button class="btn" id="undo-lists">Undo last lists</button>' : ""}
+      ${made || open.length ? `<button class="btn" id="undo-lists">${made ? "Undo last lists" : "Undo again"}</button>` : ""}
     </div>
+    ${open.length && !made ? `<p class="hint" data-undo-open>The last undo didn't confirm ${open.length === 1 ? `"${esc(open[0].name)}" deleted` : `${open.length} site lists deleted`}. Undo again to send ${open.length === 1 ? "that delete" : "those deletes"} again, or check the site lists in Sophos Fusion.</p>` : ""}
     ${view.leftOut ? `<p class="hint">${n(view.leftOut)} ${view.leftOut === 1 ? "entry is" : "entries are"} left out until you decide: broad entries, and entries with different actions in different policies.</p>` : ""}
   </div>`;
 }

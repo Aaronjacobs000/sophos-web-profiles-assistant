@@ -129,6 +129,23 @@ export function earlierUnclear(same = "name"): string {
 }
 
 /**
+ * Sends a write that a read-back then checks. A 5xx, no answer in time or a
+ * dropped connection (UnclearWriteError) can still have gone through, so it
+ * comes back as unclear rather than thrown, and the caller reads back as it
+ * would after a 2xx, the way a rollback reads back a delete: confirmed is
+ * done, found not done is failed, and nothing read is not confirmed. A
+ * refusal (a 4xx, or a request that never left) is thrown.
+ */
+export async function sendChecked<T>(write: () => Promise<T>): Promise<{ value?: T; unclear?: UnclearWriteError }> {
+  try {
+    return { value: await write() };
+  } catch (err) {
+    if (isUnclearWrite(err)) return { unclear: err };
+    throw err;
+  }
+}
+
+/**
  * Runs a create. When Sophos gives no clear answer, reads the tenant
  * back with find(): the object and a note when it is there, else an
  * UnclearWriteError that says where the tool looked and what it found.

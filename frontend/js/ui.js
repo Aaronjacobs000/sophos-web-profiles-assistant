@@ -109,11 +109,12 @@ export function retireStatus(status) {
 }
 
 /**
- * A retire step's status in plain words. A planned step in a record was never sent, because the retire stops at the
- * first failure. A failed step with a read-back was accepted by Sophos but not confirmed.
+ * A retire step's status in plain words. A planned step in a record was never sent, because the retire stops at a step
+ * Sophos refused. An unconfirmed step (a failed one with a read-back, before v0.3.20) was accepted by Sophos but not
+ * confirmed.
  */
 export function retireStepStatus(status, readBack) {
-  if (readBack && status === "failed") return "not confirmed";
+  if (status === "unconfirmed" || (readBack && status === "failed")) return "not confirmed";
   if (readBack && status === "restore-failed") return "restore not confirmed";
   return { planned: "not sent", done: "done", failed: "failed", restored: "restored", "restore-failed": "restore failed" }[status] ?? "unknown";
 }

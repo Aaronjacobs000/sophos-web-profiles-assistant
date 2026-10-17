@@ -8,6 +8,11 @@
  * deleted and the rest patched. Every write is sent once, read back and
  * audited, and the record keeps each entry and setting as it was.
  *
+ * A step Sophos refused stops the retire. One it accepted that the read-back
+ * didn't confirm is kept as unconfirmed and the retire goes on, as a build
+ * rollback goes on past a delete it couldn't confirm (category D); Restore
+ * puts it back like any step that was sent.
+ *
  * Restore runs the other way round: entries first (deleted ones re-created
  * from the record, patched ones put back), then the policies' tags.settings,
  * so no policy names a tag before its entries exist. A re-created entry gets
@@ -30,11 +35,11 @@ import { planRetire, type RetirePlan, type RetireStep } from "../domain/promote.
 import { settingValue, targetCount, targetsOf, usesWebProfile, type InventoryTenant } from "../domain/inventory.js";
 import { deviceEligibility } from "../domain/eligibility.js";
 import { canonicalJson } from "../domain/snapshot.js";
-import { auditedWrite } from "./audit-log.js";
+import { auditedWrite, auditOrWarn } from "./audit-log.js";
 import { auditedCreate } from "./build-service.js";
 import { listSnapshots, loadSnapshot } from "./snapshot-store.js";
 import { runReadiness } from "./readiness.js";
-import { readBack } from "./write-check.js";
+import { foundNote, readBack, sendChecked, type UnclearWriteError } from "./write-check.js";
 import { readText, saveFile } from "./safe-files.js";
 
 const SECTION = "retire";
@@ -55,10 +60,11 @@ export interface RetireOverview {
 }
 
 export type DoneStep = RetireStep & {
-  status: "planned" | "done" | "failed" | "restored" | "restore-failed";
+  /** unconfirmed: Sophos accepted the step (or gave no clear answer and nothing could be read), but the read-back didn't confirm it. */
+  status: "planned" | "done" | "unconfirmed" | "failed" | "restored" | "restore-failed";
   /**
    * What the read-back after the step's last write found ("not read: " and why when no read worked). Set only once Sophos
-   * accepted that write, so a failed step with one was sent but not confirmed.
+   * accepted that write, so a step with one was sent; a restore-failed step with one was sent but not confirmed.
    */
   readBack?: string;
   error?: string;
@@ -91,13 +97,28 @@ async function saveRec(dataDir: string, r: RetireRecord): Promise<void> {
   await saveFile(path.join(d, `${r.id}.json`), JSON.stringify(r, null, 2), { section: SECTION, mode: 0o600 });
 }
 
+/**
+ * A record as this version saves it. Before v0.3.20 a retire step Sophos accepted that the read-back didn't confirm was
+ * saved as failed, with its read-back: it's unconfirmed. Before v0.3.19 a restore kept the retire's read-back on a step
+ * whose restore write then failed, so a restore-failed step with a read-back and an error that isn't the restore's own
+ * note on what it read ("Read back: ...", or that it couldn't read it back) failed on its write: that read-back is the
+ * retire's, and goes.
+ */
+export function asSavedNow(r: RetireRecord): RetireRecord {
+  for (const s of r.steps) {
+    if (s.status === "failed" && s.readBack) s.status = "unconfirmed";
+    if (s.status === "restore-failed" && s.readBack && s.error && !/^(Read back: |The tool couldn't read it back)/.test(s.error)) delete s.readBack;
+  }
+  return r;
+}
+
 export async function listRecords(dataDir: string, tenantId: string): Promise<RetireRecord[]> {
   const d = dir(dataDir, tenantId);
   const names = await fs.readdir(d).catch(() => [] as string[]);
   const out: RetireRecord[] = [];
   for (const n of names.filter((x) => /^[0-9a-f-]{36}\.json$/.test(x))) {
     const text = await readText(path.join(d, n), SECTION);
-    if (text) out.push(JSON.parse(text) as RetireRecord);
+    if (text) out.push(asSavedNow(JSON.parse(text) as RetireRecord));
   }
   return out.sort((a, b) => b.at.localeCompare(a.at));
 }
@@ -211,27 +232,46 @@ export async function retire(dataDir: string, ctx: TenantContext, tags: string[]
   await saveRec(dataDir, record);
   for (const step of record.steps) {
     try {
+      // A 5xx or no answer can still have gone through, so it's read back like a 2xx; a refusal is thrown.
+      let unclear: UnclearWriteError | undefined;
+      let resource = "local-site";
+      let resourceId = "";
       if (step.op === "policy-tags") {
         const body = { settings: { [TAGS_KEY]: { value: step.after } } };
-        await auditedWrite({ tenantId: t }, "retire-tags", "policy", step.policyId, () => patchPolicy(api, t, step.policyId, body), { retire: record.id, removed: tags });
+        [resource, resourceId] = ["policy", step.policyId];
+        ({ unclear } = await sendChecked(() => auditedWrite({ tenantId: t }, "retire-tags", "policy", step.policyId, () => patchPolicy(api, t, step.policyId, body), { retire: record.id, removed: tags })));
         const back = await readBack(async () => {
           const p = await getPolicy(ro, t, step.policyId);
           return sameTags(settingValue<TagSetting>(p, TAGS_KEY), step.after) ? p : null;
         });
         step.readBack = back.value ? "tags match" : back.unread ? `not read: ${back.unread}` : "tags differ";
       } else if (step.op === "delete-entry") {
-        await auditedWrite({ tenantId: t }, "retire-delete", "local-site", step.id, () => deleteLocalSite(api, t, step.id), { retire: record.id, url: step.url, tags: step.tags });
+        resourceId = step.id;
+        ({ unclear } = await sendChecked(() => auditedWrite({ tenantId: t }, "retire-delete", "local-site", step.id, () => deleteLocalSite(api, t, step.id), { retire: record.id, url: step.url, tags: step.tags })));
         step.readBack = await goneOnReadBack(() => getLocalSite(ro, t, step.id));
       } else {
-        await auditedWrite({ tenantId: t }, "retire-patch", "local-site", step.id, () => patchLocalSite(api, t, step.id, { tags: step.after }), { retire: record.id, url: step.url, before: step.before });
+        resourceId = step.id;
+        ({ unclear } = await sendChecked(() => auditedWrite({ tenantId: t }, "retire-patch", "local-site", step.id, () => patchLocalSite(api, t, step.id, { tags: step.after }), { retire: record.id, url: step.url, before: step.before })));
         const back = await readBack(async () => {
           const s = await getLocalSite(ro, t, step.id);
           return sameList(s.tags, step.after) ? s : null;
         });
         step.readBack = back.value ? "tags match" : back.unread ? `not read: ${back.unread}` : "tags differ";
       }
-      step.status = /match|404/.test(step.readBack ?? "") && !step.readBack?.startsWith("not read") ? "done" : "failed";
-      if (step.status === "failed") throw new Error(unconfirmed(step.readBack, "change"));
+      const notRead = !!step.readBack?.startsWith("not read");
+      if (/match|404/.test(step.readBack ?? "") && !notRead) {
+        step.status = "done";
+        if (unclear) await auditOrWarn({ tenantId: t, action: `retire-${step.op === "policy-tags" ? "tags" : step.op === "delete-entry" ? "delete" : "patch"}`, resource, resourceId, ok: true, detail: { retire: record.id, note: foundNote(unclear, "the change", "in the tenant") } });
+      } else if (unclear && !notRead) {
+        // No clear answer, and a read-back found it unchanged: not made, so it stops the retire as a refusal does.
+        const found = step.readBack;
+        delete step.readBack;
+        throw new Error(`${unclear.reason.replace(/\.$/, "")}. A read-back found it unchanged (${found}), so it wasn't made.`);
+      } else {
+        // Sophos accepted it (or gave no clear answer and nothing could be read): not confirmed. The retire goes on, as a rollback goes on past a delete it couldn't confirm, and Restore puts it back too.
+        step.status = "unconfirmed";
+        step.error = unconfirmed(step.readBack, "change");
+      }
     } catch (err) {
       step.status = "failed";
       step.error = err instanceof Error ? err.message : String(err);
@@ -240,7 +280,7 @@ export async function retire(dataDir: string, ctx: TenantContext, tags: string[]
       await saveRec(dataDir, record);
     }
   }
-  record.status = record.steps.every((s) => s.status === "done") ? "retired" : record.steps.some((s) => s.status === "done") ? "partial" : "failed";
+  record.status = record.steps.every((s) => s.status === "done") ? "retired" : record.steps.some((s) => s.status === "done" || s.status === "unconfirmed") ? "partial" : "failed";
   await saveRec(dataDir, record);
   return record;
 }
@@ -273,11 +313,11 @@ export async function restoreRetire(dataDir: string, ctx: TenantContext, id: str
   const t = ctx.tenantId;
   const text = await readText(path.join(dir(dataDir, t), `${id}.json`), SECTION);
   if (!text) throw new Error("No such retire record.");
-  const record = JSON.parse(text) as RetireRecord;
+  const record = asSavedNow(JSON.parse(text) as RetireRecord);
   const api: TenantApi = ctx.client;
   const ro = new ReadOnlyApi(api);
-  // A failed step may or may not have reached Sophos; putting it back is safe either way.
-  const done = record.steps.filter((s) => s.status === "done" || s.status === "failed" || s.status === "restore-failed");
+  // A failed step may or may not have reached Sophos, and an unconfirmed one may have; putting either back is safe.
+  const done = record.steps.filter((s) => s.status === "done" || s.status === "unconfirmed" || s.status === "failed" || s.status === "restore-failed");
   const order = [...done.filter((s) => s.op === "delete-entry"), ...done.filter((s) => s.op === "patch-entry"), ...done.filter((s) => s.op === "policy-tags")];
   for (const step of order) {
     // From here the read-back and error are this restore's, set only by what it finds.

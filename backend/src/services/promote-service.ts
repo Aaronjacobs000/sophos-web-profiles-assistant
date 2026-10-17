@@ -9,7 +9,9 @@
  * policy back until the assignment shows. A pilot assigned to users or user
  * groups can't take devices (the API refuses a mix with 400), so it's
  * promoted in Sophos Fusion by user group instead. Each wave can be undone,
- * which puts the assignment back as it was before that wave.
+ * which puts the assignment back as it was before that wave. A move Sophos
+ * accepted that the read-back didn't confirm is kept as not confirmed, and
+ * can be undone like a confirmed one (category D).
  */
 
 import { promises as fs } from "node:fs";
@@ -23,10 +25,10 @@ import { appliesToFor } from "../domain/design.js";
 import { planWaves, type WavePlan } from "../domain/promote.js";
 import { deviceEligibility } from "../domain/eligibility.js";
 import { canonicalJson } from "../domain/snapshot.js";
-import { auditedWrite } from "./audit-log.js";
+import { auditedWrite, auditOrWarn } from "./audit-log.js";
 import { activePilot, type PilotInfo } from "./pilot-service.js";
 import { serverRefusal } from "./build-service.js";
-import { readBack } from "./write-check.js";
+import { foundNote, readBack, sendChecked } from "./write-check.js";
 import { readText, saveFile } from "./safe-files.js";
 
 const SECTION = "promote";
@@ -45,6 +47,12 @@ export const WAVE_UNDO_UNREAD = "Undo is off: the tool couldn't read the pilot p
 /** Why a wave undo is refused when the pilot policy is no longer in the tenant (a 404). */
 export const WAVE_UNDO_GONE = "Undo is off: the pilot policy is no longer in the tenant, so there's no assignment to put back.";
 
+/** The waves that can be undone: moved, moved but not confirmed, and an undo that didn't finish. */
+export const WAVE_UNDOABLE: ReadonlyArray<WaveRecord["status"]> = ["moved", "unconfirmed", "undo-failed"];
+
+/** What a wave undo records when the assignment was already as it was before the wave, so nothing was sent. */
+export const ALREADY_BEFORE = "assignment already as before the wave";
+
 export interface WaveRecord {
   id: string;
   at: string;
@@ -53,8 +61,9 @@ export interface WaveRecord {
   devices: Array<{ id: string; hostname: string }>;
   before: Assignment;
   after: Assignment;
-  status: "moved" | "failed" | "undone" | "undo-failed";
-  /** What the read-back after the move found. Set only once Sophos accepted the change, so a failed wave with one was sent but not confirmed. */
+  /** unconfirmed: Sophos accepted the move (or gave no clear answer and nothing could be read), but the read-back didn't confirm it. */
+  status: "moved" | "unconfirmed" | "failed" | "undone" | "undo-failed";
+  /** What the read-back after the move found. Set only once Sophos accepted the change, so a wave with one was sent. */
   readBack?: string;
   /** The same for the last undo: set only when Sophos accepted the undo but the read-back didn't confirm it. */
   undoReadBack?: string;
@@ -74,7 +83,10 @@ function recordPath(dataDir: string, tenantId: string): string {
 
 async function load(dataDir: string, tenantId: string): Promise<PromoteRecord> {
   const text = await readText(recordPath(dataDir, tenantId), SECTION).catch(() => null);
-  return text ? (JSON.parse(text) as PromoteRecord) : { tenantId, waves: [] };
+  const r = text ? (JSON.parse(text) as PromoteRecord) : { tenantId, waves: [] };
+  // Before v0.3.20 a move Sophos accepted that the read-back didn't confirm was saved as failed, with its read-back.
+  for (const w of r.waves) if (w.status === "failed" && w.readBack) w.status = "unconfirmed";
+  return r;
 }
 
 async function save(dataDir: string, r: PromoteRecord): Promise<void> {
@@ -237,15 +249,26 @@ export async function moveWave(dataDir: string, ctx: TenantContext, deviceIds: s
   record.waves.unshift(wave);
   try {
     const body = { appliesTo: appliesToFor({ endpoints: preview.after.endpoints, endpointGroups: preview.after.endpointGroups }) };
-    await auditedWrite({ tenantId: t }, "update", "policy", pilot.policyId, () => patchPolicy(api, t, pilot.policyId, body), { wave: wave.id, added: preview.devices.map((d) => d.hostname) });
+    // A 5xx or no answer can still have gone through, so it's read back like a 2xx; a refusal is thrown.
+    const { unclear } = await sendChecked(() => auditedWrite({ tenantId: t }, "update", "policy", pilot.policyId, () => patchPolicy(api, t, pilot.policyId, body), { wave: wave.id, added: preview.devices.map((d) => d.hostname) }));
     const back = await readBack(async () => {
       const p = await getPolicy(ro, t, pilot.policyId);
       return same(assignmentOf(p), preview.after) ? p : null;
     });
-    wave.readBack = back.value ? "assignment matches" : back.unread ? `not read: ${back.unread}` : "assignment differs";
-    wave.status = back.value ? "moved" : "failed";
-    // A read that failed doesn't show the devices are missing, only that the move isn't confirmed.
-    if (!back.value) wave.error = back.unread ? "The tool couldn't read the pilot policy back, so the move isn't confirmed." : "The policy read back without the new devices.";
+    if (back.value) {
+      wave.status = "moved";
+      wave.readBack = "assignment matches";
+      if (unclear) await auditOrWarn({ tenantId: t, action: "update", resource: "policy", resourceId: pilot.policyId, ok: true, detail: { wave: wave.id, note: foundNote(unclear, "the new devices", "on the pilot") } });
+    } else if (unclear && !back.unread) {
+      // No clear answer, and the pilot read back without the new devices: not moved, as a rollback counts a delete still found. The devices stay in the plan, so the wave can be moved again.
+      wave.error = `${unclear.reason.replace(/\.$/, "")}. A read-back found the pilot without the new devices, so the wave wasn't moved. Move it again in a minute or two if they're still not on the pilot.`;
+    } else {
+      // Sophos accepted the move (or gave no clear answer and nothing could be read): it may be in place, so it's not confirmed and can be undone.
+      // A read that failed doesn't show the devices are missing, only that the move isn't confirmed.
+      wave.status = "unconfirmed";
+      wave.readBack = back.unread ? `not read: ${back.unread}` : "assignment differs";
+      wave.error = back.unread ? "The tool couldn't read the pilot policy back, so the move isn't confirmed." : "The policy read back without the new devices.";
+    }
   } catch (err) {
     wave.error = err instanceof Error ? err.message : String(err);
   }
@@ -261,8 +284,9 @@ export async function undoWave(dataDir: string, ctx: TenantContext, waveId: stri
   const record = await load(dataDir, t);
   const wave = record.waves.find((w) => w.id === waveId);
   if (!wave) throw new Error("No such wave.");
-  if (!["moved", "undo-failed"].includes(wave.status)) throw new Error(`This wave is ${wave.status}; there's nothing to undo.`);
-  const later = record.waves.find((w) => w.policyId === wave.policyId && w.status === "moved" && w.at > wave.at);
+  if (!WAVE_UNDOABLE.includes(wave.status)) throw new Error(`This wave is ${wave.status}; there's nothing to undo.`);
+  // A later wave that isn't confirmed may be in place too.
+  const later = record.waves.find((w) => w.policyId === wave.policyId && (w.status === "moved" || w.status === "unconfirmed") && w.at > wave.at);
   if (later) throw new Error("Undo the later waves first.");
   // Gone (a 404): there's no assignment to put back. Not read (a 403, a 5xx, no answer in time): it can't be checked. Either way, refuse and leave the wave as it was.
   const read = await getPolicy(ro, t, wave.policyId).catch((err: unknown) => {
@@ -272,21 +296,28 @@ export async function undoWave(dataDir: string, ctx: TenantContext, waveId: stri
   delete wave.undoReadBack;
   try {
     const current = assignmentOf(read);
-    if (!same(current, wave.after)) throw new Error("The pilot's assignment has changed since this wave, so it wasn't put back. Check it in Sophos Fusion.");
-    const body = { appliesTo: appliesToFor({ endpoints: wave.before.endpoints, endpointGroups: wave.before.endpointGroups }) };
-    await auditedWrite({ tenantId: t }, "update", "policy", wave.policyId, () => patchPolicy(api, t, wave.policyId, body), { undoWave: wave.id, removed: wave.devices.map((d) => d.hostname) });
-    const back = await readBack(async () => {
-      const p = await getPolicy(ro, t, wave.policyId);
-      return same(assignmentOf(p), wave.before) ? p : null;
-    });
-    if (!back.value) {
-      // Sophos accepted the undo, but the read-back didn't confirm it.
-      wave.undoReadBack = back.unread ? `not read: ${back.unread}` : "assignment differs";
-      throw new Error(back.unread ? "The tool couldn't read the pilot policy back, so the undo isn't confirmed." : "The policy didn't read back with the earlier assignment.");
+    // A move or an undo that wasn't confirmed may not have gone through: when the assignment is already as it was before the wave, there's nothing to put back.
+    const already = wave.status !== "moved" && same(current, wave.before);
+    if (!already) {
+      if (!same(current, wave.after)) throw new Error("The pilot's assignment has changed since this wave, so it wasn't put back. Check it in Sophos Fusion.");
+      const body = { appliesTo: appliesToFor({ endpoints: wave.before.endpoints, endpointGroups: wave.before.endpointGroups }) };
+      // A 5xx or no answer can still have gone through, so it's read back like a 2xx; a refusal is thrown.
+      const { unclear } = await sendChecked(() => auditedWrite({ tenantId: t }, "update", "policy", wave.policyId, () => patchPolicy(api, t, wave.policyId, body), { undoWave: wave.id, removed: wave.devices.map((d) => d.hostname) }));
+      const back = await readBack(async () => {
+        const p = await getPolicy(ro, t, wave.policyId);
+        return same(assignmentOf(p), wave.before) ? p : null;
+      });
+      if (!back.value && unclear && !back.unread) throw new Error(`${unclear.reason.replace(/\.$/, "")}. A read-back found the pilot with this wave's devices still on it, so the undo wasn't made. Undo again in a minute or two.`);
+      if (!back.value) {
+        // Sophos accepted the undo (or gave no clear answer and nothing could be read), but the read-back didn't confirm it.
+        wave.undoReadBack = back.unread ? `not read: ${back.unread}` : "assignment differs";
+        throw new Error(back.unread ? "The tool couldn't read the pilot policy back, so the undo isn't confirmed." : "The policy didn't read back with the earlier assignment.");
+      }
+      if (unclear) await auditOrWarn({ tenantId: t, action: "update", resource: "policy", resourceId: wave.policyId, ok: true, detail: { undoWave: wave.id, note: foundNote(unclear, "the assignment as it was before the wave", "on the pilot") } });
     }
     wave.status = "undone";
     wave.undoneAt = new Date().toISOString();
-    wave.readBack = "assignment back as before the wave";
+    wave.readBack = already ? ALREADY_BEFORE : "assignment back as before the wave";
     // An earlier undo that failed is over now: the wave no longer carries its error (the audit log keeps both).
     delete wave.error;
   } catch (err) {

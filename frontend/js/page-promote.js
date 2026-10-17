@@ -25,6 +25,10 @@ const REASON = { "windows-old-agent": "Windows below 2026.1", "windows-no-agent-
 const MOVED = "assignment matches";
 // What an undo confirmed: the read-back found the assignment as it was before the wave.
 const UNDONE = "assignment back as before the wave";
+// What an undo of a wave that wasn't confirmed found when the assignment was already as before it, so nothing was sent.
+const ALREADY = "assignment already as before the wave";
+// A move Sophos accepted that the read-back didn't confirm (saved as failed, with its read-back, before v0.3.20): it can be undone (category D).
+const unconfirmedMove = (w) => w.status === "unconfirmed" || (w.status === "failed" && !!w.readBack);
 
 /**
  * A wave's row as the history shows it (category C): green only when the read-back confirmed the move; amber when
@@ -38,8 +42,9 @@ function waveRow(w) {
       return w.readBack === MOVED
         ? { tag: tag("confirmed", "Moved") }
         : { tag: tag("unconfirmed", "Not confirmed"), note: "Sophos accepted the move, but the read-back didn't confirm it. Check the pilot in Sophos Fusion.", detail: unconfirmedReason(w.readBack, w.error) };
+    case "unconfirmed":
     case "failed":
-      return w.readBack
+      return unconfirmedMove(w)
         ? { tag: tag("unconfirmed", "Not confirmed"), note: "Sophos accepted the move, but the read-back didn't confirm it. Check the pilot in Sophos Fusion.", detail: unconfirmedReason(w.readBack, w.error) }
         : { tag: tag("failed", "Failed"), note: "The move didn't finish.", detail: w.error };
     case "undone":
@@ -59,15 +64,15 @@ const stepName = (s) => (s.op === "policy-tags" ? s.policyName : s.url);
  * A retire record's outcome (category C): confirmed when every step read back as planned; failed when nothing went
  * through; otherwise amber: it didn't finish (a step failed, or a retire stopped before its last steps), or Sophos
  * accepted every step but a read-back didn't confirm one. The reason is the first step that failed, or the first one
- * not confirmed.
+ * not confirmed. A step not confirmed is "unconfirmed" (saved as failed, with its read-back, before v0.3.20).
  */
 function retireOutcome(r) {
   if (r.status === "retired" || r.status === "restored") return { state: "confirmed", label: retireStatus(r.status), reason: "" };
   const restoring = r.status === "restore-partial";
-  const bad = r.steps.filter((x) => x.status === (restoring ? "restore-failed" : "failed"));
+  const bad = r.steps.filter((x) => (restoring ? x.status === "restore-failed" : x.status === "failed" || x.status === "unconfirmed"));
   const refused = bad.find((x) => !x.readBack);
   const accepted = r.steps.some((x) => x.status === (restoring ? "restored" : "done") || (bad.includes(x) && x.readBack));
-  // A retire stops at its first step that isn't confirmed, so the steps after it were never sent.
+  // A retire stops at a step Sophos refused, so the steps after it were never sent. It goes on past one it couldn't confirm.
   const unsent = !restoring && r.steps.some((x) => x.status === "planned");
   const first = refused ?? bad[0];
   const why = !first ? "" : refused ? sentence(first.error ?? "") : unconfirmedReason(first.readBack, first.error);
@@ -128,7 +133,8 @@ function historyCard() {
   // While the pilot policy isn't read, its assignment can't be checked, and once it's gone there's none to put back, so Undo is off on its waves; the server refuses it too.
   const why = promo.policyUnread ? UNDO_OFF : !promo.policy && promo.pilot ? UNDO_GONE : "";
   const off = (w) => !!why && w.policyId === promo.pilot?.policyId;
-  const undoable = promo.waves.filter((w) => ["moved", "undo-failed"].includes(w.status));
+  // A move that wasn't confirmed may be in place, so it can be undone like a confirmed one; the server refuses nothing else.
+  const undoable = promo.waves.filter((w) => ["moved", "undo-failed"].includes(w.status) || unconfirmedMove(w));
   const rows = promo.waves
     .map((w) => {
       // A read-back that couldn't read the policy says "not read" here; why goes on the Detail line.
@@ -329,6 +335,7 @@ function wire() {
         const r = await api.post(`/api/promote/${t}/wave/${encodeURIComponent(b.dataset.undoWave)}/undo`, {});
         // Green only when the read-back found the assignment as it was; an undo read-back on record means Sophos accepted the undo.
         if (r.status === "undone" && r.readBack === UNDONE) toast("Wave undone and read back.", OUTCOME_TOAST.confirmed, 9000);
+        else if (r.status === "undone" && r.readBack === ALREADY) toast("Nothing to undo: the pilot read back with its assignment as it was before this wave.", OUTCOME_TOAST.confirmed, 9000);
         else if (r.undoReadBack || r.status === "undone") toast("Sophos accepted the undo, but the read-back didn't confirm it.", OUTCOME_TOAST.unconfirmed, 10000, unconfirmedReason(r.undoReadBack ?? r.readBack, r.error));
         else toast("Couldn't undo the wave.", OUTCOME_TOAST.failed, 9000, r.error);
       } catch (err) {
