@@ -132,6 +132,12 @@ const PARTIAL_NOTE = "Sophos made the list, but its link to the profile didn't g
 // What a read-back says when it confirms an Allow: the site in the list, and a new list linked to the profile.
 const CONFIRMED = new Set(["site listed", "list holds the site", "profile links it as allow"]);
 const allowConfirmed = (readBack) => !!readBack && String(readBack).split("; ").every((part) => CONFIRMED.has(part));
+// What a read-back couldn't read, from its plain words: the list, the profile the new list was linked to, or both.
+const unreadParts = (plain) => {
+  const list = /^not read/.test(plain);
+  const profile = /(^|; )profile not read$/.test(plain);
+  return list && profile ? "the list and the profile" : profile ? "the profile" : "the list";
+};
 // What an undo's notes say when its read-backs confirm it.
 const UNDO_CONFIRMED = new Set(["Profile read back without the list.", "List deleted, 404 on read-back.", "Site removed, confirmed on read-back."]);
 
@@ -307,7 +313,7 @@ function allowModal(plan) {
       // unconfirmed, with what was read (or why it couldn't be) on the Detail line.
       if (r.entry.status === "partial") toast(`Sophos made the list for ${r.entry.site}, but its link to the profile didn't go through. Undo it from Allow entries.`, OUTCOME_TOAST.unconfirmed, 10000, r.entry.error);
       else if (allowConfirmed(r.entry.readBack)) toast(`Allowed ${r.entry.site}: ${back.plain}.`, OUTCOME_TOAST.confirmed, 9000);
-      else if (back.detail) toast(`Sophos accepted the Allow for ${r.entry.site}, but the list couldn't be read back, so it isn't confirmed.`, OUTCOME_TOAST.unconfirmed, 10000, back.detail);
+      else if (back.detail) toast(`Sophos accepted the Allow for ${r.entry.site}, but ${unreadParts(back.plain)} couldn't be read back, so it isn't confirmed.`, OUTCOME_TOAST.unconfirmed, 10000, back.detail);
       else toast(`Sophos accepted the Allow for ${r.entry.site}, but the read-back didn't confirm it.`, OUTCOME_TOAST.unconfirmed, 10000, unconfirmedReason(r.entry.readBack));
       await reread();
     } catch (err) {

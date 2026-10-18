@@ -9,7 +9,7 @@
 // left from the migration tool are gone. Each case runs against an in-memory
 // tenant that answers as the case needs.
 
-import { test, before } from "node:test";
+import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, promises as fsp, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -38,8 +38,15 @@ const UNAVAILABLE = "Sophos API error 503: ServiceUnavailable";
 
 before(() => setReadBackDelays([0, 0]));
 
+// Every folder dataDirFor makes goes once this file's tests are done (v0.3.21), so a run leaves nothing in the temp directory.
+const made = [];
+after(() => {
+  for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+});
+
 async function dataDirFor(name) {
   const dir = mkdtempSync(path.join(tmpdir(), `wpa-v0319-${name}-`));
+  made.push(dir);
   await initState(dir, "0.3.19");
   return path.join(dir, "data");
 }

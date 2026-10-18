@@ -12,8 +12,8 @@ import { findBrowser } from "../backend/dist/services/pdf.js";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const browser = findBrowser();
 
-/** Why a browser test can't run here, or false when it can. */
-export const skipBrowser = !browser ? "no Chrome or Edge on this computer" : typeof WebSocket === "undefined" ? "this Node has no WebSocket" : false;
+/** Why a browser test can't run here, or false when it can. A run can turn them off with WPA_SKIP_BROWSER=1 (the temp folder test in v0321-fixes does). */
+export const skipBrowser = process.env.WPA_SKIP_BROWSER === "1" ? "browser tests are off for this run" : !browser ? "no Chrome or Edge on this computer" : typeof WebSocket === "undefined" ? "this Node has no WebSocket" : false;
 
 /**
  * The frontend on a free port. api maps "METHOD /path" (or "/path" for a GET)

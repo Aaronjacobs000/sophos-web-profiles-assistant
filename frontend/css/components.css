@@ -510,9 +510,8 @@ input:disabled { cursor: not-allowed; opacity: 0.5; }
 .split-row > .panel-card { min-width: 0; }
 .split-row > .panel-card + .panel-card { margin-top: 0; }
 
-/* ================= card head icons, status dots in tags ================= */
+/* ================= card head icons ================= */
 .card-head h2 .ico { width: 16px; height: 16px; }
-.tag .conn-dot { width: 6px; height: 6px; }
 
 /* ================= credentials ================= */
 .mode-picker-row { flex-direction: row; }

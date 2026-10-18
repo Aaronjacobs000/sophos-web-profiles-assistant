@@ -67,12 +67,21 @@ export function errorBanner(plain, raw, variant = "err", style = "") {
 
 /**
  * A read-back as recorded ("site listed", or "not read: " and why), split into its plain words and the answer for a
- * Detail line. An Allow that made its list adds what the profile read back after it.
+ * Detail line. An Allow that made its list adds what the profile read back after it, which can be "profile not read: "
+ * and why as well.
  */
 export function readBackParts(text) {
   const t = String(text ?? "");
-  const m = /^not read: ([\s\S]+?)(; profile (?:links it as allow|read back without the link))?$/.exec(t);
-  return m ? { plain: `not read${m[2] ?? ""}`, detail: m[1] } : { plain: t, detail: "" };
+  const m = /^([\s\S]*?)(?:; (profile (?:links it as allow|read back without the link|not read: [\s\S]+)))?$/.exec(t);
+  const split = (part) => {
+    const n = /^((?:profile )?not read): ([\s\S]+)$/.exec(part);
+    return n ? { plain: n[1], detail: n[2] } : { plain: part, detail: "" };
+  };
+  const first = split(m[1]);
+  if (!m[2]) return first;
+  const profile = split(m[2]);
+  const detail = first.detail && profile.detail ? `${sentence(first.detail)} Profile: ${profile.detail}` : first.detail || profile.detail;
+  return { plain: `${first.plain}; ${profile.plain}`, detail };
 }
 
 /**

@@ -159,10 +159,10 @@ test("Clean up: deletes the last undo couldn't confirm can be sent again with Un
     view = cleanupView([row(LIST, { status: "still there after delete", readBack: "still there" }), row("Example cleaned Warn", { status: "not confirmed", readBack: NOT_READ })]);
     await b.open(`${base}/cleanup.html?tenant=${T}`, 1440, ".cu-list-actions");
     assert.equal((await b.evaluate(ACTIONS)).hint, "The last undo didn't confirm 2 site lists deleted. Undo again to send those deletes again, or check the site lists in Sophos Fusion.");
-    // Refused deletes aren't sent again from here.
+    // From v0.3.21 deletes Sophos refused are sent again too, as a rollback sends them again (covered in v0321-pages).
     view = cleanupView([row(LIST, { status: "delete failed", error: RAW }), row("Example cleaned Warn", { status: "in use by a profile, left", error: RAW })]);
     await b.open(`${base}/cleanup.html?tenant=${T}`, 1440, ".cu-list-actions");
-    assert.deepEqual(await b.evaluate(ACTIONS), { buttons: ["Create site lists"], hint: null });
+    assert.deepEqual((await b.evaluate(ACTIONS)).buttons, ["Create site lists", "Undo again"]);
   } finally {
     srv.close();
     await b?.close();

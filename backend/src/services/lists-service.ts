@@ -4,7 +4,8 @@
  * sent once, read back, and audited; the ids are kept so undo deletes only
  * what this created. A delete the undo couldn't confirm can be sent again
  * (category D): one answered 404 was already gone, and one answered with a
- * 5xx or no answer is read back, as in a build rollback.
+ * 5xx or no answer is read back, as in a build rollback. So can a delete
+ * Sophos refused, as a rollback sends one again.
  */
 
 import { promises as fs } from "node:fs";
@@ -14,7 +15,7 @@ import { ReadOnlyApi, errorStatus, type TenantApi } from "../sophos/api/requeste
 import { createSiteList, deleteSiteList, getSiteList, listSiteLists, listSites } from "../sophos/api/web-filters.js";
 import { auditedCreate, sameSites } from "./build-service.js";
 import { auditOrWarn } from "./audit-log.js";
-import { isUnclearWrite, readBack } from "./write-check.js";
+import { isUnclearWrite, readBack, takenNameAdvice } from "./write-check.js";
 import { readText, saveFile } from "./safe-files.js";
 import { SITE_LIST_LIMIT } from "../domain/design.js";
 
@@ -26,8 +27,10 @@ export interface ListsRecord {
    * Each list as the create left it, or the undo after it: status "created", "failed" or "planned" (not sent), then
    * "deleted", "still there after delete", "not confirmed", "in use by a profile, left" or "delete failed". readBack is
    * what the read-back after the last write Sophos accepted found ("matches", how it differed, or "not read: " and why).
+   * deleteAnswer is set with a delete's read-back when Sophos didn't answer that delete with a success (a 5xx, a 404, no
+   * answer in time or a dropped connection): what it said. Without it, Sophos accepted the delete.
    */
-  lists: Array<{ name: string; action: string; sites: number; id?: string; status: string; readBack?: string; error?: string }>;
+  lists: Array<{ name: string; action: string; sites: number; id?: string; status: string; readBack?: string; deleteAnswer?: string; error?: string }>;
 }
 
 function recordPath(dataDir: string, scope: string): string {
@@ -71,7 +74,7 @@ export async function createLists(dataDir: string, api: TenantApi, tenantId: str
         () => createSiteList(api, tenantId, { name: l.name, description: `${l.action[0]!.toUpperCase()}${l.action.slice(1)} exceptions kept by the site list cleaner (Web Profiles Assistant, unofficial).`, sites: l.sites }),
         async () => (await listSiteLists(new ReadOnlyApi(api), tenantId)).find((x) => x.name === l.name) ?? null,
         "the site list",
-        { where: "the tenant's site lists", found: `no site list named "${l.name}"` },
+        { where: "the tenant's site lists", found: `no site list named "${l.name}"`, advice: takenNameAdvice(`the site list "${l.name}"`, "Undo last lists", "create the lists again") },
         { name: l.name, sites: l.sites.length, scope },
       );
       row.id = value.id;
@@ -97,10 +100,13 @@ export async function createLists(dataDir: string, api: TenantApi, tenantId: str
   return record;
 }
 
-/** The rows an undo sends a delete for: lists the create made, and deletes an earlier undo couldn't confirm. */
-export const UNDO_LISTS_RETRY = ["created", "not confirmed", "still there after delete"];
+/**
+ * The rows an undo sends a delete for: lists the create made, deletes an earlier undo couldn't confirm, and deletes
+ * Sophos refused (a list a profile uses, or a refusal), which a rollback also sends again.
+ */
+export const UNDO_LISTS_RETRY = ["created", "not confirmed", "still there after delete", "delete failed", "in use by a profile, left"];
 
-/** Deletes the lists the last create made, by id. A list a profile uses is refused (409) and left. Run again, it sends the deletes it couldn't confirm again. */
+/** Deletes the lists the last create made, by id. A list a profile uses is refused (409) and left. Run again, it sends every delete that didn't finish again. */
 export async function undoLists(dataDir: string, api: TenantApi, scope: string): Promise<ListsRecord> {
   const record = await lastListsRecord(dataDir, scope);
   if (!record) throw new Error("Nothing to undo.");
@@ -109,10 +115,11 @@ export async function undoLists(dataDir: string, api: TenantApi, scope: string):
     const entry = { tenantId: t, action: "delete", resource: "site-list", resourceId: row.id!, detail: { name: row.name, undo: scope } };
     // Set when the delete got no clear answer (a 5xx, no answer in time, or a dropped connection), which can come back for a delete that went through.
     let unclear: string | undefined;
-    // Set when Sophos answered 404: already gone, which a retry meets when the earlier delete went through.
-    let answered404 = false;
+    // Set when Sophos answered 404 (what it said): already gone, which a retry meets when the earlier delete went through.
+    let answered404: string | undefined;
     // Only this attempt's answer counts.
     delete row.error;
+    delete row.deleteAnswer;
     try {
       await deleteSiteList(api, t, row.id!);
       await auditOrWarn({ ...entry, ok: true });
@@ -120,7 +127,7 @@ export async function undoLists(dataDir: string, api: TenantApi, scope: string):
       const status = errorStatus(err);
       const message = err instanceof Error ? err.message : String(err);
       if (isUnclearWrite(err) || (status !== undefined && status >= 500)) unclear = (isUnclearWrite(err) ? err.reason : message).replace(/\.$/, "");
-      else if (status === 404) answered404 = true;
+      else if (status === 404) answered404 = message.replace(/\.$/, "");
       else {
         await auditOrWarn({ ...entry, ok: false, error: message });
         row.status = status === 409 ? "in use by a profile, left" : "delete failed";
@@ -143,7 +150,7 @@ export async function undoLists(dataDir: string, api: TenantApi, scope: string):
       row.readBack = "404 on read-back";
       if (unclear || answered404) await auditOrWarn({ ...entry, ok: true, detail: { ...entry.detail, note: `${unclear ?? "Sophos answered 404, so it was already gone"}, then a read-back found it gone (404)` } });
     } else if (unclear && !gone.unread) {
-      // No clear answer, and a read-back still found it: not deleted, as a rollback counts it. Undo sends it again only when Sophos took the delete.
+      // No clear answer, and a read-back still found it: not deleted, as a rollback counts it. Undo sends it again, as a rollback does.
       row.status = "delete failed";
       row.error = `${unclear}. A read-back still found it, so it wasn't deleted.`;
       await auditOrWarn({ ...entry, ok: false, error: row.error });
@@ -151,6 +158,8 @@ export async function undoLists(dataDir: string, api: TenantApi, scope: string):
       // Sophos accepted the delete (or gave no clear answer, or 404, and nothing could be read): not confirmed, so Undo sends it again.
       row.status = gone.unread ? "not confirmed" : "still there after delete";
       row.readBack = gone.unread ? `not read: ${gone.unread}` : "still there";
+      // How Sophos answered when it wasn't a success: the page then doesn't say Sophos accepted the delete.
+      if (unclear || answered404) row.deleteAnswer = unclear ?? answered404;
       if (unclear || answered404) await auditOrWarn({ ...entry, ok: false, error: `${unclear ?? "Sophos answered 404"}. ${gone.unread ? `A read-back couldn't read it (${gone.unread.replace(/\.$/, "")}), so it may still be there.` : "A read-back still found it."}` });
     }
   }

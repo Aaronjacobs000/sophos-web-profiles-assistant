@@ -38,7 +38,7 @@ The screenshots come from a test tenant; its name and device names are replaced.
 
 ## What it does
 
-Checks only read; every write is previewed in a dry run, sent once, read back, recorded in the audit log, and can be rolled back. A message or row is green only when the read-back confirmed the write, amber when Sophos accepted it but the read-back didn't confirm it (or only part of it went through), and red when it failed, with the reason on a Detail line. A write Sophos accepted that the read-back didn't confirm can still be undone or sent again, the same as a confirmed one.
+Checks only read; every write is previewed in a dry run, sent once, read back, recorded in the audit log, and can be rolled back. A message or row is green only when the read-back confirmed the write, amber when Sophos accepted it, or gave no clear answer, but the read-back didn't confirm it (or only part of it went through), and red when it failed, with the reason on a Detail line. A write Sophos accepted that the read-back didn't confirm can still be undone or sent again, the same as a confirmed one.
 
 | Step | What you get |
 | --- | --- |
@@ -150,7 +150,7 @@ A category override (an entry that puts a site in a classic category) applies in
 
 The dry run checks the plan against the tenant as it is now: room under 20 profiles and 20 site lists, names already taken, sites per list, the coverage rule, and that the chosen devices and groups exist. Devices that can't use profiles are flagged. Nothing is written.
 
-The build saves a rollback snapshot, then sends each write once and reads it back: the site lists (sites compared), the profile (categories and site list actions compared), then the pilot policy at priority 1 with the profile, logging on and Recommended file types. A write Sophos answers unclearly is looked up by name before anything else happens. Each write goes to the audit log, and the build record keeps every id.
+The build saves a rollback snapshot, then sends each write once and reads it back: the site lists (sites compared), the profile (categories and site list actions compared), then the pilot policy at priority 1 with the profile, logging on and Recommended file types. A write Sophos answers unclearly is looked up by name before anything else happens. If it isn't found, the tool keeps no ID for it, so a rollback can't remove it if it shows up later. The message then says to look for it in Sophos Fusion and delete it there before you build again, since the dry run refuses a name that's already taken. Each write goes to the audit log, and the build record keeps every id.
 
 The pilot is assigned through `appliesTo` to devices and device groups, or to user groups, never both. The pilot is a Web Control policy, which applies to computers: the dry run refuses servers and server groups, and so do promotion waves, because the API accepts them on a computer policy anyway. Device groups are always sent with an empty `endpoints` list, because the API answers 500 to `endpointGroups` on its own. You can build the pilot disabled and turn it on later.
 
@@ -176,7 +176,7 @@ Do this last, once every wave is done. Choose the tags, run the dry run, then re
 2. deletes the entries that carried only those tags
 3. untags entries that also carry other tags or a category override
 
-Each write is read back and audited, and the record keeps every entry and setting as it was. A step Sophos refuses stops the retire. A step it accepts that the read-back doesn't confirm is marked not confirmed, and the retire goes on; Restore puts it back with the rest. The tool warns, and asks you to confirm, while devices still depend on the tags: devices that can't use profiles, and enabled classic policies that use them. Restore runs the other way round: entries first (deleted ones re-created with their tags, category and comment), then the policies' tag settings. Compare with snapshot then checks the tenant against the snapshot taken before the retire.
+Each write is read back and audited, and the record keeps every entry and setting as it was. A step Sophos refuses stops the retire. A step it accepts that the read-back doesn't confirm is marked not confirmed, and the retire goes on; Restore puts it back with the rest. When that step is a policy's tag change, the record says the policy may still name the tags whose entries were then deleted or untagged, because a policy that names a tag with no entries can't be saved. The tool warns, and asks you to confirm, while devices still depend on the tags: devices that can't use profiles, and enabled classic policies that use them. Restore runs the other way round: entries first (deleted ones re-created with their tags, category and comment), then the policies' tag settings. Compare with snapshot then checks the tenant against the snapshot taken before the retire.
 
 ## Rollback snapshot
 

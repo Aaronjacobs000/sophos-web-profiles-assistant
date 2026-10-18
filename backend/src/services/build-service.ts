@@ -60,7 +60,7 @@ import { compareToSnapshot, planWebsiteManagementRestore, type RestoreStep } fro
 import { buildSnapshot, canonicalJson, type Snapshot } from "../domain/snapshot.js";
 import { readInventory } from "./inventory-reader.js";
 import { auditedWrite, auditOrWarn } from "./audit-log.js";
-import { createChecked, isUnclearWrite, readBack } from "./write-check.js";
+import { createChecked, isUnclearWrite, readBack, takenNameAdvice, type ReadBackMiss } from "./write-check.js";
 import { loadSnapshot } from "./snapshot-store.js";
 import { runReadiness } from "./readiness.js";
 import { readText, saveFile } from "./safe-files.js";
@@ -98,6 +98,11 @@ export interface BuildStep {
    * read) but the read-back didn't confirm it gone: "still there", or "not read: " and why.
    */
   deleteReadBack?: string;
+  /**
+   * Set with deleteReadBack when Sophos didn't answer that delete with a success (a 5xx, a 404, no answer in time or a
+   * dropped connection): what it said. Without it, Sophos accepted the delete.
+   */
+  deleteAnswer?: string;
   error?: string;
   note?: string;
   /** For a profile: its site lists by plan key, filled with real ids at build time. */
@@ -353,7 +358,7 @@ export async function auditedCreate<T extends { id: string }>(
   create: () => Promise<T>,
   find: () => Promise<T | null>,
   what: string,
-  miss: { where: string; found: string },
+  miss: ReadBackMiss,
   detail: Record<string, unknown>,
 ): Promise<{ value: T; note?: string }> {
   try {
@@ -413,7 +418,7 @@ export async function execute(
           () => createSiteList(api, t, body),
           async () => (await listSiteLists(new ReadOnlyApi(api), t)).find((l) => l.name === body.name) ?? null,
           "the site list",
-          { where: "the tenant's site lists", found: `no site list named "${body.name}"` },
+          { where: "the tenant's site lists", found: `no site list named "${body.name}"`, advice: takenNameAdvice(`the site list "${body.name}"`, "a rollback", "build again") },
           { name: body.name, sites: body.sites.length, buildId: record.id },
         );
         step.id = value.id;
@@ -447,7 +452,7 @@ export async function execute(
           () => createProfile(api, t, body),
           async () => (await listProfiles(new ReadOnlyApi(api), t)).find((p) => p.name === body.name) ?? null,
           "the profile",
-          { where: "the tenant's profiles", found: `no profile named "${String(body.name)}"` },
+          { where: "the tenant's profiles", found: `no profile named "${String(body.name)}"`, advice: takenNameAdvice(`the profile "${String(body.name)}"`, "a rollback", "build again") },
           { name: body.name, buildId: record.id },
         );
         step.id = value.id;
@@ -479,7 +484,7 @@ export async function execute(
           () => createPolicy(api, t, body),
           async () => (await listPolicies(new ReadOnlyApi(api), t, "web-control")).find((p) => p.name === body.name) ?? null,
           "the pilot policy",
-          { where: "the tenant's Web Control policies", found: `no policy named "${String(body.name)}"` },
+          { where: "the tenant's Web Control policies", found: `no policy named "${String(body.name)}"`, advice: takenNameAdvice(`the policy "${String(body.name)}"`, "a rollback", "build again") },
           { name: body.name, appliesTo: body.appliesTo, buildId: record.id },
         );
         step.id = value.id;
@@ -604,6 +609,7 @@ export async function rollback(
         s.status = "delete-failed";
         // Refused: this delete wasn't accepted, so there's no read-back to keep.
         delete s.deleteReadBack;
+        delete s.deleteAnswer;
         out.push({ kind: s.kind, name: s.name, id: s.id, status: "failed", error: message });
         continue;
       }
@@ -623,6 +629,10 @@ export async function rollback(
     // Not confirmed gone after a delete Sophos accepted, or one it gave no clear answer to and nothing could be read: kept for the step's row.
     if (gone.value || (unclear !== undefined && !gone.unread)) delete s.deleteReadBack;
     else s.deleteReadBack = gone.unread ? `not read: ${gone.unread}` : "still there";
+    // How Sophos answered when it wasn't a success, kept with that read-back: the row then doesn't say Sophos accepted the delete.
+    const answer = unclear?.reason ?? answered404;
+    if (s.deleteReadBack && answer !== undefined) s.deleteAnswer = answer;
+    else delete s.deleteAnswer;
     if (unclear === undefined) {
       // A read that failed doesn't show it's still there, only that the delete isn't confirmed.
       out.push(gone.value || !gone.unread ? { kind: s.kind, name: s.name, id: s.id, status: gone.value ? "deleted, 404 on read-back" : "still there after delete" } : { kind: s.kind, name: s.name, id: s.id, status: "not confirmed", error: read });

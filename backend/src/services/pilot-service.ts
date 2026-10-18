@@ -41,7 +41,7 @@ import { SITE_LIST_LIMIT } from "../domain/design.js";
 import { fitName } from "../domain/cleanup.js";
 import { auditedWrite, auditOrWarn } from "./audit-log.js";
 import { auditedCreate, getBuild, listBuilds, saveRecord, type BuildRecord, type BuildStep } from "./build-service.js";
-import { foundNote, notFound, readBack, sendChecked } from "./write-check.js";
+import { foundNote, notFound, readBack, sendChecked, takenNameAdvice } from "./write-check.js";
 import { readText, saveFile } from "./safe-files.js";
 
 const SECTION = "pilot";
@@ -140,6 +140,11 @@ export interface AllowEntry {
   profileBefore?: { filterBySiteList?: boolean; siteListActions: NonNullable<WebProfile["siteListActions"]> };
   /** partial: Sophos made the pilot allows list, but its link to the profile didn't go through (or isn't confirmed), so it can be undone. */
   status: "added" | "partial" | "failed" | "undone" | "undo-failed";
+  /**
+   * What the read-back found: the site ("site listed", "not found"), or a new list ("list holds the site", "list read back
+   * without the site"), with "not read: " and why when no read worked. A new list adds what the profile read back after
+   * the link, after "; ": "profile links it as allow", "profile read back without the link", or "profile not read: " and why.
+   */
   readBack?: string;
   /** What the read-back after the last undo found, set only when Sophos accepted the undo but the read-back didn't confirm it. */
   undoReadBack?: string;
@@ -320,7 +325,7 @@ export async function addAllow(dataDir: string, ctx: TenantContext, host: string
           () => createSiteList(api, t, body),
           async () => (await listSiteLists(ro, t)).find((l) => l.name === body.name) ?? null,
           "the pilot allows list",
-          { where: "the tenant's site lists", found: `no site list named "${body.name}"` },
+          { where: "the tenant's site lists", found: `no site list named "${body.name}"`, advice: takenNameAdvice(`the site list "${body.name}"`, "an undo", "allow the site again") },
           { name: body.name, sites: 1, pilotBuild: plan.pilot.buildId },
         );
         entry.listId = value.id;
@@ -363,7 +368,8 @@ export async function addAllow(dataDir: string, ctx: TenantContext, host: string
         // No clear answer, and the link didn't read back (or nothing could be read): not confirmed linked, so the entry is partial and its list can be undone.
         if (unclear && !back.value) throw notFound(unclear, { where: `the profile "${step.profileName}"`, found: "no link to the list in it", advice: "Undo it from Allow entries, then allow the site again.", check: `the profile "${step.profileName}" in Sophos Fusion` }, back.unread);
         if (unclear) await auditOrWarn({ tenantId: t, action: "update", resource: "profile", resourceId: step.profileId, ok: true, detail: { linkList: entry.listId, note: foundNote(unclear, "the link to the list", "in the profile") } });
-        entry.readBack = `${entry.readBack}; ${back.value ? "profile links it as allow" : "profile read back without the link"}`;
+        // A profile no read worked on says why it wasn't read, never that it read back without the link.
+        entry.readBack = `${entry.readBack}; ${back.value ? "profile links it as allow" : back.unread ? `profile not read: ${back.unread}` : "profile read back without the link"}`;
       }
     }
     entry.status = "added";

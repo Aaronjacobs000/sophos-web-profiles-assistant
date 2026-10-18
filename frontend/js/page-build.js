@@ -4,7 +4,7 @@
 
 import { api } from "./api.js";
 import { currentTenantId, getStatus, initShell, setTenant } from "./shell.js";
-import { OUTCOME_TAG, OUTCOME_TOAST, buildHeadline, detailHtml, errorBanner, esc, escAttr, sentence, unconfirmedReason } from "./ui.js";
+import { OUTCOME_TAG, OUTCOME_TOAST, buildHeadline, detailHtml, errorBanner, esc, escAttr, readBackParts, sentence, unconfirmedReason } from "./ui.js";
 import { icon } from "./icons.js";
 import { toast } from "./toast.js";
 import { diffHtml } from "./diff-view.js";
@@ -24,6 +24,7 @@ const READ_BACK = { matches: "matches", differs: "differs", "not-read": "not rea
 /**
  * A step's tag and the plain line under it (category C): Created is green only when the read-back matched what was
  * sent; amber when Sophos made it, or accepted its delete, but the read-back didn't confirm it; red when it failed.
+ * A delete Sophos didn't answer with a success (a 5xx, a 404, or no answer) wasn't accepted, and the line says so.
  * How it differed, or why it couldn't be read, goes on the Detail line.
  */
 function stepState(s, rec) {
@@ -45,6 +46,10 @@ function stepState(s, rec) {
     case "deleted":
       return { tag: tag("tag-muted", "Rolled back") };
     case "delete-failed":
+      if (s.deleteReadBack && s.deleteAnswer) {
+        const back = readBackParts(s.deleteReadBack);
+        return { tag: tag(OUTCOME_TAG.unconfirmed, "Delete not confirmed"), note: "Sophos didn't say the delete went through, and the read-back didn't confirm it's gone. Roll back again, or check it in Sophos Fusion.", detail: `${sentence(s.deleteAnswer)} Read back: ${sentence(back.detail || back.plain)}` };
+      }
       return s.deleteReadBack
         ? { tag: tag(OUTCOME_TAG.unconfirmed, "Delete not confirmed"), note: "Sophos accepted the delete, but the read-back didn't confirm it's gone. Roll back again, or check it in Sophos Fusion.", detail: unconfirmedReason(s.deleteReadBack) }
         : { tag: tag(OUTCOME_TAG.failed, "Delete failed"), note: rolled?.error ? "The delete failed. Roll back again, or check it in Sophos Fusion." : "", detail: rolled?.error };
@@ -78,15 +83,20 @@ function buildOutcome(rec) {
 
 /**
  * A rollback's outcome (category C): green only when every object read back gone and Website Management read back as
- * the snapshot has it; amber when Sophos accepted part or all of it but a read-back didn't confirm it; red when nothing
- * it sent went through. The reason goes on the Detail line.
+ * the snapshot has it; amber when Sophos accepted part or all of it, or didn't answer a delete with a success, but a
+ * read-back didn't confirm it; red when nothing it sent went through. It says Sophos accepted the rollback only when
+ * Sophos answered every delete the read-back didn't confirm with a success. The reason goes on the Detail line.
  */
 function rollbackOutcome(rec) {
   if (rec.status === "rolled-back") return { state: "confirmed", text: `${buildHeadline(rec)}.`, reason: "" };
   const steps = rec.rollback?.steps ?? [];
   const failed = steps.find((o) => o.status === "failed");
-  const open = steps.find((o) => o.status === "not confirmed" || o.status === "still there after delete");
+  const opens = steps.filter((o) => o.status === "not confirmed" || o.status === "still there after delete");
+  const open = opens[0];
   const why = (o) => `${o.name}: ${sentence(o.error ?? "It was still there after the delete.")}`;
+  // A delete Sophos answered with a 5xx or a 404, or not at all, wasn't accepted (its step keeps what Sophos said).
+  const unanswered = opens.filter((o) => o.id && rec.steps.some((s) => s.id === o.id && s.deleteAnswer)).length;
+  if (!failed && open && unanswered) return { state: "unconfirmed", text: `The rollback isn't confirmed: Sophos didn't say ${unanswered === 1 ? "a delete" : `${unanswered} deletes`} went through, and the read-back didn't confirm ${unanswered === 1 ? "it" : "them"}.`, reason: why(open) };
   if (!failed && open) return { state: "unconfirmed", text: "Sophos accepted the rollback, but the read-back didn't confirm all of it.", reason: why(open) };
   return { state: steps.some((o) => o.status !== "failed") ? "unconfirmed" : "failed", text: `${buildHeadline(rec)}.`, reason: failed ? why(failed) : open ? why(open) : "" };
 }

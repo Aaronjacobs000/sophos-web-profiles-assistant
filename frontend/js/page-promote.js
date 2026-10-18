@@ -179,13 +179,25 @@ function retireCard() {
   </section>`;
 }
 
+/**
+ * A retire that went on past a tag change it couldn't confirm, and then took the entries with those tags: which
+ * policies may still name a tag with no entries, which Sophos Fusion won't save, and that Restore covers it.
+ */
+function tagsLeftNote(r) {
+  if (r.status !== "partial" || !r.tagsMayRemain?.length) return "";
+  const list = (xs) => (xs.length > 1 ? `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}` : xs[0]);
+  const named = r.tagsMayRemain.map((p) => `"${p.policyName}" may still name ${list(p.tags)}`);
+  const many = r.tagsMayRemain.length > 1 || r.tagsMayRemain[0].tags.length > 1;
+  return `<span class="err-note" data-tags-remain>${esc(`${list(named)}, but the retire went on and deleted or untagged the entries with ${many ? "them" : "it"}. A policy that names a tag with no entries can't be saved. Restore puts the entries back before the tags.`)}</span>`;
+}
+
 function recordsCard() {
   const rows = retire.records
     .map((r) => {
       // A restored record is muted, not green: the retire it undid is over. A read-back that couldn't read says "not read"; why goes on the Detail line.
       const o = retireOutcome(r);
       const cls = r.status === "restored" ? "tag-muted" : OUTCOME_TAG[o.state];
-      return `<tr><td class="r-when">${when(r.at)}</td><td class="r-tags">${esc(r.tags.join(", "))}</td><td class="r-status"><span class="tag ${cls}">${esc(o.label)}</span></td><td class="r-steps">${esc(r.steps.map((s) => `${stepName(s)}: ${retireStepStatus(s.status, s.readBack)}${s.readBack ? ` (${readBackParts(s.readBack).plain})` : ""}`).join("; "))}${detailHtml(o.reason)}</td>
+      return `<tr><td class="r-when">${when(r.at)}</td><td class="r-tags">${esc(r.tags.join(", "))}</td><td class="r-status"><span class="tag ${cls}">${esc(o.label)}</span></td><td class="r-steps">${esc(r.steps.map((s) => `${stepName(s)}: ${retireStepStatus(s.status, s.readBack)}${s.readBack ? ` (${readBackParts(s.readBack).plain})` : ""}`).join("; "))}${tagsLeftNote(r)}${detailHtml(o.reason)}</td>
       <td class="r-act"><div class="r-actions">${["retired", "partial", "restore-partial", "failed"].includes(r.status) ? `<button class="btn btn-small" data-restore="${escAttr(r.id)}">Restore</button>` : ""}<button class="btn btn-small" data-diff="${escAttr(r.snapshotFile)}">Compare with snapshot</button></div></td></tr>`;
     })
     .join("");

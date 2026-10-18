@@ -70,10 +70,22 @@ export function foundNote(err: UnclearWriteError, what = "it", where = "in the t
 export const READ_LAG_CAVEAT = "Sophos can take a while to show a change, so this does not prove it failed.";
 
 /**
- * The advice after a create a read-back did not find. A rerun skips what
- * is already in the tenant, so trying again after a wait is safe.
+ * The advice after a create a read-back did not find, where a rerun skips
+ * what is already in the tenant and records it (a restore re-creates an
+ * entry only when none has its URL), so trying again after a wait is safe.
  */
 export const CREATE_RETRY_ADVICE = "Wait a minute or two, then try again: anything in the tenant by then is skipped as already there.";
+
+/**
+ * The advice after a create a read-back did not find, where a rerun refuses
+ * a name that's taken instead (the build's dry run, Create site lists and a
+ * narrow Allow). The tool kept no ID for it, so if it shows up later, nothing
+ * here can undo it: what (for example 'the site list "Approved SaaS"'), the
+ * undo that won't remove it, and what to do again once it's gone.
+ */
+export function takenNameAdvice(what: string, undo: string, again: string): string {
+  return `Wait a minute or two, then look for ${what} in Sophos Fusion. If it's there, the tool has no record of it, so ${undo} won't remove it: delete it there, then ${again}. A name that's already taken is refused.`;
+}
 
 /** Where a read-back looked and what it found, for the message when it finds nothing. */
 export interface ReadBackMiss {
@@ -81,7 +93,7 @@ export interface ReadBackMiss {
   where: string;
   /** What it found there, for example 'no site list named "Approved SaaS"'. */
   found: string;
-  /** What to do next, given that the tool has already looked. Defaults to CREATE_RETRY_ADVICE. */
+  /** What to do next, given that the tool has already looked. Defaults to CREATE_RETRY_ADVICE; see takenNameAdvice. */
   advice?: string;
   /** What to check by hand when no read worked. Defaults to "the tenant". */
   check?: string;

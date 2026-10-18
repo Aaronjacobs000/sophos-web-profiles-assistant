@@ -11,7 +11,10 @@
  * A step Sophos refused stops the retire. One it accepted that the read-back
  * didn't confirm is kept as unconfirmed and the retire goes on, as a build
  * rollback goes on past a delete it couldn't confirm (category D); Restore
- * puts it back like any step that was sent.
+ * puts it back like any step that was sent. When that step is a policy's tag
+ * change, the entries with those tags are still deleted or untagged, so the
+ * record lists each policy that may still name a tag whose entries it took
+ * (tagsMayRemain): a policy that names a tag with no entries can't be saved.
  *
  * Restore runs the other way round: entries first (deleted ones re-created
  * from the record, patched ones put back), then the policies' tags.settings,
@@ -84,6 +87,12 @@ export interface RetireRecord {
   steps: DoneStep[];
   warnings: string[];
   restoredAt?: string;
+  /**
+   * Set on a retire whose tag change for a policy wasn't confirmed, once it went on to delete or untag entries with those
+   * tags: each policy that may still name a tag whose entries it took. Restore puts the entries back before the tags, so
+   * a restore clears it.
+   */
+  tagsMayRemain?: Array<{ policyId: string; policyName: string; tags: string[] }>;
 }
 
 function dir(dataDir: string, tenantId: string): string {
@@ -109,7 +118,26 @@ export function asSavedNow(r: RetireRecord): RetireRecord {
     if (s.status === "failed" && s.readBack) s.status = "unconfirmed";
     if (s.status === "restore-failed" && s.readBack && s.error && !/^(Read back: |The tool couldn't read it back)/.test(s.error)) delete s.readBack;
   }
+  // Before v0.3.21 a retire that went on past a tag change it couldn't confirm didn't say which policies may still name the tags.
+  if (r.status === "partial" && !r.tagsMayRemain) {
+    const left = tagsLeftNamed(r);
+    if (left.length) r.tagsMayRemain = left;
+  }
   return r;
+}
+
+/**
+ * The policies that may still name a retired tag whose entries the retire then took: the policy's tag change wasn't
+ * confirmed, and a later step that was sent deleted an entry with the tag or took the tag off one.
+ */
+export function tagsLeftNamed(r: RetireRecord): NonNullable<RetireRecord["tagsMayRemain"]> {
+  const sent = r.steps.filter((s) => s.op !== "policy-tags" && (s.status === "done" || s.status === "unconfirmed"));
+  const taken = new Set(sent.flatMap((s) => (s.op === "delete-entry" ? s.tags : s.op === "patch-entry" ? s.before.filter((t) => !s.after.includes(t)) : [])));
+  return r.steps.flatMap((s) => {
+    if (s.op !== "policy-tags" || s.status !== "unconfirmed") return [];
+    const tags = s.before.filter((x) => !s.after.some((y) => y.tag === x.tag) && taken.has(x.tag)).map((x) => x.tag);
+    return tags.length ? [{ policyId: s.policyId, policyName: s.policyName, tags }] : [];
+  });
 }
 
 export async function listRecords(dataDir: string, tenantId: string): Promise<RetireRecord[]> {
@@ -281,6 +309,8 @@ export async function retire(dataDir: string, ctx: TenantContext, tags: string[]
     }
   }
   record.status = record.steps.every((s) => s.status === "done") ? "retired" : record.steps.some((s) => s.status === "done" || s.status === "unconfirmed") ? "partial" : "failed";
+  const left = tagsLeftNamed(record);
+  if (left.length) record.tagsMayRemain = left;
   await saveRec(dataDir, record);
   return record;
 }
@@ -314,6 +344,8 @@ export async function restoreRetire(dataDir: string, ctx: TenantContext, id: str
   const text = await readText(path.join(dir(dataDir, t), `${id}.json`), SECTION);
   if (!text) throw new Error("No such retire record.");
   const record = asSavedNow(JSON.parse(text) as RetireRecord);
+  // The restore puts the entries back before the tags, and its own steps say what it confirmed.
+  delete record.tagsMayRemain;
   const api: TenantApi = ctx.client;
   const ro = new ReadOnlyApi(api);
   // A failed step may or may not have reached Sophos, and an unconfirmed one may have; putting either back is safe.

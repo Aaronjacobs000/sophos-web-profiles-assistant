@@ -3,7 +3,8 @@
 // a refusal is an "Sophos API error <status>" error, and a write that gets no
 // clear answer is an UnclearWriteError. Placeholder names only.
 
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { after } from "node:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -17,8 +18,15 @@ export const TOOL = { name: "web-profiles-assistant", version: "0.3.20" };
 export const UNAVAILABLE = "Sophos API error 503: ServiceUnavailable";
 export const UNCLEAR = "Sophos API error 500: InternalServerError";
 
+// Every folder dataDirFor makes goes once the test file's tests are done, so a run leaves nothing in the temp directory.
+const made = [];
+after(() => {
+  for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+});
+
 export async function dataDirFor(name) {
   const dir = mkdtempSync(path.join(tmpdir(), `wpa-v0320-${name}-`));
+  made.push(dir);
   await initState(dir, TOOL.version);
   return path.join(dir, "data");
 }

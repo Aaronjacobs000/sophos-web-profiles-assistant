@@ -15,6 +15,8 @@
 // drew as "Wave moved. Read back: ..." with the raw answer in it, the pilot
 // switch, a wave undo, a rollback, the clean-up's lists, a retire and a
 // restore), and the records carry the raw answer in every read-back field.
+// From v0.3.21 they also carry it in what Sophos said to a delete it didn't
+// answer with a success, and in an Allow's read-back of the profile.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -47,7 +49,7 @@ const ev = (n, url) => ({ id: `e${n}`, type: "Event::Endpoint::WebControlViolati
 const digest = { days: 7, since: null, pilotOnly: false, pilotDevices: null, imported: 0, otherWebEvents: 0, ...summarize([ev(1, "https://app.example.com/"), ev(2, "https://chat.example.org/")]) };
 const allow = (n, s, extra) => ({ id: id(n), at: now, host: `h${n}.example.com`, site: `h${n}.example.com`, buildId: "b1", profileId: "pr1", listName: "Example allows", createdList: true, status: s, buildStatus: "built", ...extra });
 const store = { days: [], total: 0, imported: 0, state: { tenantId: T, enabled: true, runs: [{ at: now, source: "api", ok: false, pages: 0, fetched: 0, web: 0, added: 0, error: RAW }] } };
-const pilotView = { pilot, policy, store, allows: [allow(1, "failed", { listName: "", error: RAW }), allow(2, "undo-failed", { error: RAW }), allow(3, "undone", { error: RAW }), allow(4, "added", { readBack: `not read: ${RAW}` }), allow(5, "undo-failed", { readBack: "site listed", undoReadBack: `not read: ${RAW}`, error: "The list couldn't be read back, so the removal isn't confirmed." }), allow(6, "added", { readBack: `not read: ${RAW}; profile links it as allow` })] };
+const pilotView = { pilot, policy, store, allows: [allow(1, "failed", { listName: "", error: RAW }), allow(2, "undo-failed", { error: RAW }), allow(3, "undone", { error: RAW }), allow(4, "added", { readBack: `not read: ${RAW}` }), allow(5, "undo-failed", { readBack: "site listed", undoReadBack: `not read: ${RAW}`, error: "The list couldn't be read back, so the removal isn't confirmed." }), allow(6, "added", { readBack: `not read: ${RAW}; profile links it as allow` }), allow(7, "added", { readBack: `list holds the site; profile not read: ${RAW}` })] };
 const wave = (n, s, extra) => ({ id: id(n), at: now, buildId: "b1", policyId: "p1", devices: [{ id: `w${n}`, hostname: `EXAMPLE-PC-0${n}` }], status: s, ...extra });
 const promo = {
   pilot,
@@ -63,7 +65,7 @@ const step = (order, kind, extra) => ({ order, kind, key: kind, name: `Example $
 const build = {
   id: "00000001-0000-4000-a000-000000000000", tenantId: T, createdAt: now, status: "partial", snapshotFile: "example-tenant_20261016-010000.json",
   pilot: { profileKey: "profile", name: "WF pilot: Example profile", enabled: false, targets: { endpoints: [] } },
-  steps: [step(1, "site-list", { status: "created", id: "l1", readBack: "matches" }), step(2, "profile", { status: "failed", error: RAW }), step(3, "site-list", { status: "created", id: "l3", readBack: "not-read", readBackNote: RAW }), step(4, "policy", { status: "delete-failed", id: "p4", deleteReadBack: `not read: ${RAW}` })],
+  steps: [step(1, "site-list", { status: "created", id: "l1", readBack: "matches" }), step(2, "profile", { status: "failed", error: RAW }), step(3, "site-list", { status: "created", id: "l3", readBack: "not-read", readBackNote: RAW }), step(4, "policy", { status: "delete-failed", id: "p4", deleteReadBack: `not read: ${RAW}`, deleteAnswer: RAW })],
   checks: [{ ok: false, level: "fail", text: "Couldn't check the targets.", detail: RAW }, { ok: false, level: "fail", text: `Couldn't check the targets: ${RAW}` }, { ok: false, level: "fail", text: `No rollback snapshot could be saved, so nothing was built. ${RAW}` }],
 };
 const design = { policies: [], profiles: [{ key: "profile", name: "Example profile", mode: "preset", preset: "keep-it-clean", sourcePolicies: [{ id: "p0", name: "Base Policy", type: "web-control" }], flags: [], diff: [], siteLists: [], categoryActions: {} }], siteLists: [], limits: { profiles: { planned: 1, existing: 0, limit: 20 }, siteLists: { planned: 0, existing: 0, limit: 20 } }, cleanedUp: false, warnings: [] };
@@ -182,6 +184,12 @@ const ANSWERS = [
   { page: `/build.html?tenant=${T}`, steps: [click("[data-rollback]")], writes: { [`POST /api/build/${T}/${build.id}/rollback`]: (body) => (body.dryRun ? { ...build, restorePlan: [] } : { ...build, status: "rollback-partial", rollback: { at: now, steps: [{ kind: "policy", name: "WF pilot: Example profile", status: "not confirmed", error: `A read-back couldn't read it (${RAW}), so it may still be there.` }] } }) } },
   { page: `/cleanup.html?tenant=${T}`, steps: [click("#create-lists")], writes: { [`POST /api/cleanup/${T}/lists`]: (body) => (body.dryRun ? { lists: [{ name: "Example cleaned block", action: "block", sites: ["app.example.com"] }], problems: [], leftOut: 0 } : { tenantId: T, scope: T, createdAt: now, lists: [{ name: "Example cleaned block", action: "block", sites: 1, id: "l1", status: "created", readBack: `not read: ${RAW}` }] }) } },
   { page: `/cleanup.html?tenant=${T}`, steps: [click("#undo-lists")], writes: { [`POST /api/cleanup/${T}/lists`]: { tenantId: T, scope: T, createdAt: now, lists: [{ name: "Example cleaned block", action: "block", sites: 1, id: "l1", status: "not confirmed", readBack: `not read: ${RAW}` }] } } },
+  { page: `/cleanup.html?tenant=${T}`, steps: [click("#undo-lists")], writes: { [`POST /api/cleanup/${T}/lists`]: { tenantId: T, scope: T, createdAt: now, lists: [{ name: "Example cleaned block", action: "block", sites: 1, id: "l1", status: "not confirmed", readBack: `not read: ${RAW}`, deleteAnswer: RAW }] } } },
+  {
+    page: `/pilot.html?tenant=${T}`,
+    steps: [click("[data-allow]"), click("#allow-go")],
+    writes: { [`POST /api/pilot/${T}/allow`]: (body) => (body.dryRun ? { plan: { host: "app.example.com", site: "app.example.com", pilot, steps: [{ op: "create-list", name: "Example allows", site: "app.example.com" }, { op: "link-list", profileId: "pr1", profileName: "Example profile", priority: 2 }], problems: [], notes: [] } } : { plan: {}, entry: allow(9, "added", { readBack: `list holds the site; profile not read: ${RAW}` }) }) },
+  },
 ];
 
 /** The frontend, with an API that answers reads from s.reads (or fails them all) and fails every write with the raw answer. */

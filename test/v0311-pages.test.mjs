@@ -172,8 +172,14 @@ test("retire records and the messages after a retire or restore say each status 
       ["Restored", "Base Policy: restored", null],
       ["Retired", "Base Policy: done", null],
     ]);
+    // From v0.3.21 the page's requests are slowed, as under full-suite load: a restore's toast shows before the page has
+    // read itself again, and this record's Restore stays off until that read draws it again. So each click waits for it.
+    await b.call("Network.enable");
+    await b.call("Network.emulateNetworkConditions", { offline: false, latency: 300, downloadThroughput: -1, uploadThroughput: -1 });
+    const restore = `[data-restore="${records[0].id}"]`;
     const lastToast = async () => {
-      await b.evaluate(`window.confirm = () => true; document.querySelectorAll(".toast").forEach((t) => t.remove()); document.querySelector("[data-restore]").click(); true`);
+      await b.waitFor(`${restore}:not(:disabled)`);
+      await b.evaluate(`window.confirm = () => true; document.querySelectorAll(".toast").forEach((t) => t.remove()); document.querySelector(${JSON.stringify(restore)}).click(); true`);
       await b.waitFor(".toast");
       return b.evaluate(`(() => { const t = [...document.querySelectorAll(".toast")].pop().cloneNode(true); t.querySelector("[data-toast-detail]")?.remove(); return t.textContent; })()`);
     };
