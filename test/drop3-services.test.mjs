@@ -2,9 +2,9 @@
 // collector, the narrow Allow and its undo, promotion waves, and retiring
 // tags with a restore. The live runs are in "Build report - drop 3.md".
 
-import { test, before } from "node:test";
+import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -16,6 +16,12 @@ import { moveWave, promotionView, setPilotEnabled, undoWave } from "../backend/d
 import { previewRetire, retire, restoreRetire } from "../backend/dist/services/retire-service.js";
 import { designFor, dryRun, execute, getBuild, rollback } from "../backend/dist/services/build-service.js";
 import { device, wcPolicy } from "./fixtures.mjs";
+
+// Every folder this file makes in the temp directory goes once its tests are done (v0.3.22, as in v0.3.21), so a run leaves nothing there.
+const made = [];
+after(() => {
+  for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+});
 
 const T = "00000000-0000-4000-a000-000000000001";
 const FIXTURE = JSON.parse(readFileSync(new URL("./fixtures/siem-webcontrol-events.json", import.meta.url), "utf8"));
@@ -156,6 +162,7 @@ function seedPilot(fake, { users = false } = {}) {
 
 before(async () => {
   const root = mkdtempSync(path.join(tmpdir(), "wpa-d3-"));
+  made.push(root);
   await initState(root, "0.3.0");
   dataDir = path.join(root, "data");
   setReadBackDelays([0, 0]);
@@ -239,6 +246,7 @@ test("narrow Allow: the first creates and links a list with the top priority; un
 
 test("promotion waves add eligible devices to the pilot in the device shape, read back, and undo", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "wpa-d3w-"));
+  made.push(root);
   await initState(root, "0.3.0");
   dataDir = path.join(root, "data");
   const fake = new FakeSophos();
@@ -275,6 +283,7 @@ test("a user pilot can't take device waves", async () => {
 
 test("retire: policies lose the tag first, entries go, and restore puts every one back", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "wpa-d3r-"));
+  made.push(root);
   await initState(root, "0.3.0");
   dataDir = path.join(root, "data");
   const fake = new FakeSophos();
@@ -314,6 +323,7 @@ test("retire: policies lose the tag first, entries go, and restore puts every on
 
 test("the build, waves and Allow treat a server on the computer pilot: refused before any write, or flagged", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "wpa-d3s-"));
+  made.push(root);
   await initState(root, "0.3.1");
   dataDir = path.join(root, "data");
   const fake = new FakeSophos();
@@ -348,6 +358,7 @@ test("the build, waves and Allow treat a server on the computer pilot: refused b
 
 test("narrow Allow refuses a whole top-level domain, a public suffix or a shared platform", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "wpa-d3b-"));
+  made.push(root);
   await initState(root, "0.3.7");
   dataDir = path.join(root, "data");
   const fake = new FakeSophos();
@@ -365,6 +376,7 @@ test("narrow Allow refuses a whole top-level domain, a public suffix or a shared
 
 test("rollback restores Website Management only from a snapshot whose hash still matches", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "wpa-d3k-"));
+  made.push(root);
   await initState(root, "0.3.7");
   dataDir = path.join(root, "data");
   const fake = new FakeSophos();

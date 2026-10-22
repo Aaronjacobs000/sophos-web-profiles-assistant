@@ -3,9 +3,9 @@
 // than a 404 says the read failed instead of passing for a missing policy, on
 // the Pilot page and in its pilot devices filter.
 
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -16,6 +16,12 @@ import { idsDeletedByTool, rollback } from "../backend/dist/services/build-servi
 import { SophosClient } from "../backend/dist/sophos/client/sophos-client.js";
 import express from "express";
 import { pilotRouter } from "../backend/dist/routes/pilot.js";
+
+// Every folder this file makes in the temp directory goes once its tests are done (v0.3.22, as in v0.3.21), so a run leaves nothing there.
+const made = [];
+after(() => {
+  for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+});
 
 const T = "00000000-0000-4000-a000-000000000001";
 const HOST = "https://api-us01.central.sophos.com";
@@ -63,6 +69,7 @@ const step = (order, kind, name, id) => ({ order, kind, key: kind, name, method:
 
 async function setup() {
   const root = mkdtempSync(path.join(tmpdir(), "wpa-v0311-"));
+  made.push(root);
   await initState(root, "0.3.11");
   setReadBackDelays([0, 0]);
   const dataDir = path.join(root, "data");
@@ -177,6 +184,7 @@ test("a pilot policy read that fails another way than a 404 says why it wasn't r
 // Last in this file: it configures a mock tenant credential in this process's environment.
 test("GET /api/pilot and its pilot devices filter say the pilot policy wasn't read, unlike a 404", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "wpa-v0311r-"));
+  made.push(root);
   writeFileSync(path.join(root, ".env"), "CREDENTIAL_MODE=tenant\nSOPHOS_TENANT_CLIENT_ID=mock-client-id\nSOPHOS_TENANT_CLIENT_SECRET=mock-client-secret\nSOPHOS_TENANT_LABEL=Example Tenant\n");
   const tenant = new MockTenant();
   const policyId = randomUUID();

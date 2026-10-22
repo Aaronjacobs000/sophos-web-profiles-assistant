@@ -2,9 +2,9 @@
 // it's called failed, the Promote page says when the pilot policy is gone
 // instead of failing on the 404, and the Build page headline is plain words.
 
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -15,6 +15,12 @@ import { promotionView } from "../backend/dist/services/promote-service.js";
 import { rollback } from "../backend/dist/services/build-service.js";
 import { SophosClient } from "../backend/dist/sophos/client/sophos-client.js";
 import { buildHeadline } from "../frontend/js/ui.js";
+
+// Every folder this file makes in the temp directory goes once its tests are done (v0.3.22, as in v0.3.21), so a run leaves nothing there.
+const made = [];
+after(() => {
+  for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+});
 
 const T = "00000000-0000-4000-a000-000000000001";
 const HOST = "https://api-us01.central.sophos.com";
@@ -69,6 +75,7 @@ const step = (order, kind, name, id, status = "created") => ({ order, kind, key:
 
 async function setup(buildOver = {}) {
   const root = mkdtempSync(path.join(tmpdir(), "wpa-v039-"));
+  made.push(root);
   await initState(root, "0.3.9");
   setReadBackDelays([0, 0]);
   const dataDir = path.join(root, "data");

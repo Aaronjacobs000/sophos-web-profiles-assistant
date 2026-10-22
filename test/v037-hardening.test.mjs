@@ -3,15 +3,21 @@
 // folder, the credential file and the audit log are private to the account
 // that runs the tool.
 
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, statSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { noFraming, ownPagesOnly } from "../backend/dist/middleware/local-host.js";
 import { readEnvFile, renderEnvFile, setEnvValues } from "../backend/dist/config/env-file.js";
 import { getState, initState } from "../backend/dist/state.js";
 import { audit } from "../backend/dist/services/audit-log.js";
+
+// Every folder this file makes in the temp directory goes once its tests are done (v0.3.22, as in v0.3.21), so a run leaves nothing there.
+const made = [];
+after(() => {
+  for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+});
 
 function fakeRes() {
   return {
@@ -71,6 +77,7 @@ test("a value with a line break can't add its own lines to .env", async () => {
 
 test("the data folder, the credential file and the audit log are private to the account that runs the tool", { skip: process.platform === "win32" }, async () => {
   const root = mkdtempSync(path.join(tmpdir(), "wpa-v037-"));
+  made.push(root);
   writeFileSync(path.join(root, ".env"), "SOPHOS_TENANT_CLIENT_ID=\n", { mode: 0o644 });
   await initState(root, "0.3.7");
   const dataDir = getState().dataDir;

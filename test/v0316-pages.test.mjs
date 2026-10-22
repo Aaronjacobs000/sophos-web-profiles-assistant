@@ -279,10 +279,12 @@ test("a failed action on the other pages says so in plain words in its toast, wi
 
 test("toasts are fully opaque, so nothing on the page shows through, whatever color scheme the browser prefers", { skip: skipBrowser, timeout: 60_000 }, async () => {
   const { server: srv, base } = await server();
-  // The toast's background and opacity, and every ancestor's opacity, once it has settled.
+  // The toast's background and opacity, and every ancestor's opacity, once it has settled: its entry animation has
+  // finished. From v0.3.22 the test waits for that, not a fixed 600 ms, which under a loaded computer can end before
+  // the animation's first frame (opacity 0). Below, the page's animations run slowed, so a fixed wait fails every time.
   const LOOK = `(async () => {
-    await new Promise((r) => setTimeout(r, 600));
     const t = document.querySelector(".toast");
+    await Promise.all(t.getAnimations().map((a) => a.finished));
     const cs = getComputedStyle(t);
     const alpha = (c) => { const m = /rgba?\\(([^)]+)\\)/.exec(c); const p = m[1].split(/[ ,\\/]+/).filter(Boolean); return p.length > 3 ? Number(p[3]) : 1; };
     const ancestors = []; for (let e = t; e; e = e.parentElement) ancestors.push(Number(getComputedStyle(e).opacity));
@@ -295,6 +297,9 @@ test("toasts are fully opaque, so nothing on the page shows through, whatever co
       for (const width of [1440, 390]) {
         await b.open(`${base}/pilot.html?tenant=${T}`, width, "#schedule");
         await b.call("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: scheme }, { name: "prefers-reduced-motion", value: "reduce" }] });
+        // At a thousandth of their speed, the toast's entry (0.001 s with reduced motion) takes 1 s.
+        await b.call("Animation.enable");
+        await b.call("Animation.setPlaybackRate", { playbackRate: 0.001 });
         await b.evaluate(click("#schedule"));
         await toasts(b);
         assert.deepEqual(await b.evaluate(LOOK), { background: 1, opacity: 1 }, `${scheme}, ${width} px`);

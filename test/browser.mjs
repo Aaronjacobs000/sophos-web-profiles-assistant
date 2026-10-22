@@ -2,7 +2,7 @@
 // driven over the DevTools protocol, for tests that look at a page as drawn.
 
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,10 +33,25 @@ export async function pageServer(api) {
   return { server, base: `http://127.0.0.1:${server.address().port}` };
 }
 
+/**
+ * A temp folder in dir, as the settings that point a process at it (v0.3.22): a test browser's, in the folder that
+ * holds its profile, or a test server's, in its own folder, which go when the test is done with them. A browser stopped
+ * with kill() leaves what it made there (on macOS, a com.google.Chrome.* folder for its singleton socket, and one for a
+ * component download it started), and Chrome on macOS takes MAC_CHROMIUM_TMPDIR, not TMPDIR.
+ */
+export function tempIn(dir) {
+  const temp = path.join(dir, "tmp");
+  mkdirSync(temp, { recursive: true });
+  return { TMPDIR: temp, TMP: temp, TEMP: temp, MAC_CHROMIUM_TMPDIR: temp };
+}
+
+/** A test browser's environment: this process's, with its own temp folder in dir. */
+export const browserEnv = (dir) => ({ ...process.env, ...tempIn(dir) });
+
 /** A headless browser and one page in it. */
 export async function openBrowser() {
   const profile = mkdtempSync(path.join(tmpdir(), "wpa-pages-"));
-  const child = spawn(browser, ["--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", "--disable-extensions", `--user-data-dir=${profile}`, "--remote-debugging-port=0", "about:blank"], { stdio: ["ignore", "ignore", "pipe"] });
+  const child = spawn(browser, ["--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", "--disable-extensions", `--user-data-dir=${profile}`, "--remote-debugging-port=0", "about:blank"], { stdio: ["ignore", "ignore", "pipe"], env: browserEnv(profile) });
   let stderr = "";
   child.stderr.on("data", (d) => (stderr = (stderr + String(d)).slice(-2000)));
   const exited = new Promise((resolve) => child.once("exit", resolve));

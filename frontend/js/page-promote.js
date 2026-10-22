@@ -4,7 +4,7 @@
 
 import { api } from "./api.js";
 import { currentTenantId, getStatus, initShell, setTenant } from "./shell.js";
-import { OUTCOME_TAG, OUTCOME_TOAST, detailHtml, esc, escAttr, plural, readBackParts, retireStatus, retireStepStatus, rollbackUnfinishedBanner, sentence, unconfirmedReason } from "./ui.js";
+import { OUTCOME_TAG, OUTCOME_TOAST, detailHtml, esc, escAttr, plural, readBackParts, retireStatus, retireStepStatus, rollbackUnfinishedBanner, sentence, unansweredReason, unconfirmedReason } from "./ui.js";
 import { icon } from "./icons.js";
 import { toast } from "./toast.js";
 import { diffHtml } from "./diff-view.js";
@@ -31,27 +31,35 @@ const ALREADY = "assignment already as before the wave";
 const unconfirmedMove = (w) => w.status === "unconfirmed" || (w.status === "failed" && !!w.readBack);
 
 /**
+ * A move, or an undo, the read-back didn't confirm: what Sophos said goes first when it didn't answer with a success (a
+ * 5xx, or no answer), which isn't called accepted.
+ */
+const notConfirmed = (what, answer, readBack, error, next) =>
+  answer
+    ? { note: `Sophos didn't say the ${what} went through, and the read-back didn't confirm it. ${next}`, detail: unansweredReason(answer, readBack, error) }
+    : { note: `Sophos accepted the ${what}, but the read-back didn't confirm it. ${next}`, detail: unconfirmedReason(readBack, error) };
+
+/**
  * A wave's row as the history shows it (category C): green only when the read-back confirmed the move; amber when
- * Sophos accepted the move or the undo but the read-back didn't confirm it; red when it failed. The plain line goes
- * under the devices, and why (what Sophos or the tool answered) on the Detail line.
+ * Sophos accepted the move or the undo, or didn't answer it with a success, but the read-back didn't confirm it; red
+ * when it failed. The plain line goes under the devices, and why (what Sophos or the tool answered) on the Detail line.
  */
 function waveRow(w) {
   const tag = (state, label) => `<span class="tag ${state === "done" ? "tag-muted" : OUTCOME_TAG[state]}">${label}</span>`;
+  const CHECK = "Check the pilot in Sophos Fusion.";
   switch (w.status) {
     case "moved":
-      return w.readBack === MOVED
-        ? { tag: tag("confirmed", "Moved") }
-        : { tag: tag("unconfirmed", "Not confirmed"), note: "Sophos accepted the move, but the read-back didn't confirm it. Check the pilot in Sophos Fusion.", detail: unconfirmedReason(w.readBack, w.error) };
+      return w.readBack === MOVED ? { tag: tag("confirmed", "Moved") } : { tag: tag("unconfirmed", "Not confirmed"), ...notConfirmed("move", w.answer, w.readBack, w.error, CHECK) };
     case "unconfirmed":
     case "failed":
       return unconfirmedMove(w)
-        ? { tag: tag("unconfirmed", "Not confirmed"), note: "Sophos accepted the move, but the read-back didn't confirm it. Check the pilot in Sophos Fusion.", detail: unconfirmedReason(w.readBack, w.error) }
+        ? { tag: tag("unconfirmed", "Not confirmed"), ...notConfirmed("move", w.answer, w.readBack, w.error, CHECK) }
         : { tag: tag("failed", "Failed"), note: "The move didn't finish.", detail: w.error };
     case "undone":
       return { tag: tag("done", "Undone") };
     case "undo-failed":
       return w.undoReadBack
-        ? { tag: tag("unconfirmed", "Undo not confirmed"), note: "Sophos accepted the undo, but the read-back didn't confirm it. Undo again, or check the pilot in Sophos Fusion.", detail: unconfirmedReason(w.undoReadBack, w.error) }
+        ? { tag: tag("unconfirmed", "Undo not confirmed"), ...notConfirmed("undo", w.undoAnswer, w.undoReadBack, w.error, "Undo again, or check the pilot in Sophos Fusion.") }
         : { tag: tag("failed", "Undo failed"), note: "The undo didn't finish. Undo again, or check the pilot in Sophos Fusion.", detail: w.error };
     default:
       return { tag: "" };
@@ -62,9 +70,10 @@ const stepName = (s) => (s.op === "policy-tags" ? s.policyName : s.url);
 
 /**
  * A retire record's outcome (category C): confirmed when every step read back as planned; failed when nothing went
- * through; otherwise amber: it didn't finish (a step failed, or a retire stopped before its last steps), or Sophos
- * accepted every step but a read-back didn't confirm one. The reason is the first step that failed, or the first one
- * not confirmed. A step not confirmed is "unconfirmed" (saved as failed, with its read-back, before v0.3.20).
+ * through; otherwise amber: it didn't finish (a step failed, or a retire stopped before its last steps), or every step
+ * went to Sophos but a read-back didn't confirm one. The reason is the first step that failed, or the first one not
+ * confirmed, one Sophos didn't answer with a success (a 5xx, or no answer) first; unanswered counts those, which aren't
+ * called accepted. A step not confirmed is "unconfirmed" (saved as failed, with its read-back, before v0.3.20).
  */
 function retireOutcome(r) {
   if (r.status === "retired" || r.status === "restored") return { state: "confirmed", label: retireStatus(r.status), reason: "" };
@@ -74,12 +83,13 @@ function retireOutcome(r) {
   const accepted = r.steps.some((x) => x.status === (restoring ? "restored" : "done") || (bad.includes(x) && x.readBack));
   // A retire stops at a step Sophos refused, so the steps after it were never sent. It goes on past one it couldn't confirm.
   const unsent = !restoring && r.steps.some((x) => x.status === "planned");
-  const first = refused ?? bad[0];
-  const why = !first ? "" : refused ? sentence(first.error ?? "") : unconfirmedReason(first.readBack, first.error);
+  const unanswered = bad.filter((x) => x.readBack && x.answer);
+  const first = refused ?? unanswered[0] ?? bad[0];
+  const why = !first ? "" : refused ? sentence(first.error ?? "") : first.answer ? unansweredReason(first.answer, first.readBack, first.error) : unconfirmedReason(first.readBack, first.error);
   const reason = why ? `${stepName(first)}: ${why}` : "";
   if (!accepted) return { state: "failed", label: retireStatus(r.status), reason };
   if (refused || unsent) return { state: "unconfirmed", label: restoring ? "Restore didn't finish" : "Retire didn't finish", reason };
-  return { state: "unconfirmed", label: restoring ? "Restore not confirmed" : "Retire not confirmed", reason, accepted: restoring ? "the restore" : "the retire" };
+  return { state: "unconfirmed", label: restoring ? "Restore not confirmed" : "Retire not confirmed", reason, accepted: restoring ? "the restore" : "the retire", unanswered: unanswered.length };
 }
 
 function pilotCard() {
@@ -288,10 +298,19 @@ function wireRetry() {
   );
 }
 
-/** The message after a retire or a restore: its outcome in plain words, colored by what was confirmed, with the reason on the Detail line. */
+/**
+ * The message after a retire or a restore: its outcome in plain words, colored by what was confirmed, with the reason
+ * on the Detail line. It says Sophos accepted it only when Sophos answered every step the read-back didn't confirm with
+ * a success.
+ */
 function outcomeToast(r) {
   const o = retireOutcome(r);
-  const text = o.accepted ? `Sophos accepted ${o.accepted}, but the read-back didn't confirm all of it.` : `${o.label}.`;
+  const n = o.unanswered;
+  const text = n
+    ? `${o.accepted[0].toUpperCase()}${o.accepted.slice(1)} isn't confirmed: Sophos didn't say ${n === 1 ? "a step" : `${n} steps`} went through, and the read-back didn't confirm ${n === 1 ? "it" : "them"}.`
+    : o.accepted
+      ? `Sophos accepted ${o.accepted}, but the read-back didn't confirm all of it.`
+      : `${o.label}.`;
   toast(text, OUTCOME_TOAST[o.state], o.state === "confirmed" ? 9000 : 10000, o.reason);
 }
 
@@ -330,8 +349,10 @@ function wire() {
         b.disabled = true;
         b.innerHTML = '<span class="spinner"></span>Moving';
         const r = await api.post(`/api/promote/${t}/wave`, { devices: ids, dryRun: false });
-        // Green only when the read-back found the devices on the pilot. A read-back on record means Sophos accepted the move.
+        // Green only when the read-back found the devices on the pilot. A read-back on record means the move went to Sophos;
+        // Sophos accepted it unless it didn't answer with a success (answer).
         if (r.status === "moved" && r.readBack === MOVED) toast(`Wave ${wave.n} moved and read back.`, OUTCOME_TOAST.confirmed, 9000);
+        else if (r.readBack && r.answer) toast(`Sophos didn't say the move of wave ${wave.n} went through, and the read-back didn't confirm it.`, OUTCOME_TOAST.unconfirmed, 10000, unansweredReason(r.answer, r.readBack, r.error));
         else if (r.readBack) toast(`Sophos accepted wave ${wave.n}, but the read-back didn't confirm the move.`, OUTCOME_TOAST.unconfirmed, 10000, unconfirmedReason(r.readBack, r.error));
         else toast(`Couldn't move wave ${wave.n}.`, OUTCOME_TOAST.failed, 9000, r.error);
       } catch (err) {
@@ -345,9 +366,11 @@ function wire() {
       if (!window.confirm("Put the pilot's assignment back as it was before this wave?")) return;
       try {
         const r = await api.post(`/api/promote/${t}/wave/${encodeURIComponent(b.dataset.undoWave)}/undo`, {});
-        // Green only when the read-back found the assignment as it was; an undo read-back on record means Sophos accepted the undo.
+        // Green only when the read-back found the assignment as it was; an undo read-back on record means the undo went to
+        // Sophos, which accepted it unless it didn't answer with a success (undoAnswer).
         if (r.status === "undone" && r.readBack === UNDONE) toast("Wave undone and read back.", OUTCOME_TOAST.confirmed, 9000);
         else if (r.status === "undone" && r.readBack === ALREADY) toast("Nothing to undo: the pilot read back with its assignment as it was before this wave.", OUTCOME_TOAST.confirmed, 9000);
+        else if (r.undoReadBack && r.undoAnswer) toast("Sophos didn't say the undo went through, and the read-back didn't confirm it.", OUTCOME_TOAST.unconfirmed, 10000, unansweredReason(r.undoAnswer, r.undoReadBack, r.error));
         else if (r.undoReadBack || r.status === "undone") toast("Sophos accepted the undo, but the read-back didn't confirm it.", OUTCOME_TOAST.unconfirmed, 10000, unconfirmedReason(r.undoReadBack ?? r.readBack, r.error));
         else toast("Couldn't undo the wave.", OUTCOME_TOAST.failed, 9000, r.error);
       } catch (err) {

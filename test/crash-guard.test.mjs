@@ -25,6 +25,7 @@ import { estateRouter } from "../backend/dist/routes/estate.js";
 import { readinessRouter } from "../backend/dist/routes/readiness.js";
 import { convertRouter } from "../backend/dist/routes/convert.js";
 import { pilotRouter } from "../backend/dist/routes/pilot.js";
+import { tempIn } from "./browser.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const T = "00000000-0000-4000-a000-000000000001";
@@ -169,7 +170,8 @@ async function startServer({ mode, answer, prepare }) {
   writeFileSync(path.join(dir, "mock.mjs"), MOCK);
   const port = await freePort();
   const child = spawn(process.execPath, ["--import", path.join(dir, "mock.mjs"), path.join(root, "backend/dist/server.js")], {
-    env: { PATH: process.env.PATH, HOME: process.env.HOME, PORT: String(port), WPA_ENV_FILE: path.join(dir, "test.env"), WPA_DATA_DIR: dataDir, SIEM_COLLECT_HOURS: "1", MOCK_MODE: mode, MOCK_ANSWER: answer },
+    // Its temp folder, and that of any browser it starts for a PDF, is in its own folder (v0.3.22), which stop() removes.
+    env: { PATH: process.env.PATH, HOME: process.env.HOME, PORT: String(port), WPA_ENV_FILE: path.join(dir, "test.env"), WPA_DATA_DIR: dataDir, SIEM_COLLECT_HOURS: "1", MOCK_MODE: mode, MOCK_ANSWER: answer, ...tempIn(dir) },
     stdio: ["ignore", "pipe", "pipe"],
   });
   const out = { text: "" };

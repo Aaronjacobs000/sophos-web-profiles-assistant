@@ -1,6 +1,6 @@
 {
   "name": "web-profiles-assistant",
-  "version": "0.3.21",
+  "version": "0.3.22",
   "description": "Unofficial, locally run web tool that checks a Sophos Fusion tenant, or a partner's whole estate, for the move from classic Web Control policies and Website Management tags to web filtering profiles and site lists.",
   "type": "module",
   "private": true,
@@ -11,7 +11,7 @@
   },
   "homepage": "https://github.com/Aaronjacobs000/sophos-web-profiles-assistant#readme",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "build": "tsc",

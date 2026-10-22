@@ -54,7 +54,7 @@ Customers use a tenant credential. Partners use a partner credential, or a tenan
 
 ## Quick start
 
-You need Node.js 20 or later. For the PDF report you also need Chrome or Edge on the same computer.
+You need Node.js 22 or later. Use 22.23.4, 24.22.1, 26.12.1 or a later release, which have a security fix for Node's Brotli decoder. For the PDF report you also need Chrome or Edge on the same computer.
 
 ```bash
 git clone https://github.com/Aaronjacobs000/sophos-web-profiles-assistant.git
