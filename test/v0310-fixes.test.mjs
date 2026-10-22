@@ -2,9 +2,9 @@
 // back like one Sophos answers with a 5xx, the audit log records what the
 // read-back found, and the Pilot page says when the pilot policy is gone.
 
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -15,6 +15,12 @@ import { idsDeletedByTool, rollback } from "../backend/dist/services/build-servi
 import { SophosClient } from "../backend/dist/sophos/client/sophos-client.js";
 import express from "express";
 import { pilotRouter } from "../backend/dist/routes/pilot.js";
+
+// Every folder this file makes in the temp directory goes once its tests are done (v0.3.22, as in v0.3.21), so a run leaves nothing there.
+const made = [];
+after(() => {
+  for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+});
 
 const T = "00000000-0000-4000-a000-000000000001";
 const HOST = "https://api-us01.central.sophos.com";
@@ -75,6 +81,7 @@ const step = (order, kind, name, id) => ({ order, kind, key: kind, name, method:
 
 async function setup() {
   const root = mkdtempSync(path.join(tmpdir(), "wpa-v0310-"));
+  made.push(root);
   await initState(root, "0.3.10");
   setReadBackDelays([0, 0]);
   const dataDir = path.join(root, "data");
@@ -232,6 +239,7 @@ test("the Pilot page says the pilot policy is gone, and what to do, when Sophos 
 // Last in this file: it configures a mock tenant credential in this process's environment.
 test("GET /api/pilot gives the Pilot page the gone note when the pilot policy answers 404", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "wpa-v0310r-"));
+  made.push(root);
   writeFileSync(path.join(root, ".env"), "CREDENTIAL_MODE=tenant\nSOPHOS_TENANT_CLIENT_ID=mock-client-id\nSOPHOS_TENANT_CLIENT_SECRET=mock-client-secret\nSOPHOS_TENANT_LABEL=Example Tenant\n");
   const tenant = new MockTenant();
   const sophos = (url, init) => {

@@ -70,6 +70,11 @@ export type DoneStep = RetireStep & {
    * accepted that write, so a step with one was sent; a restore-failed step with one was sent but not confirmed.
    */
   readBack?: string;
+  /**
+   * Set with readBack when Sophos didn't answer the step's write with a success (a 5xx, no answer in time or a dropped
+   * connection) and nothing could be read back: what it said. Without it, Sophos accepted the write.
+   */
+  answer?: string;
   error?: string;
   /** For a deleted or patched entry: the whole entry as it was. */
   entry?: LocalSite;
@@ -299,6 +304,8 @@ export async function retire(dataDir: string, ctx: TenantContext, tags: string[]
         // Sophos accepted it (or gave no clear answer and nothing could be read): not confirmed. The retire goes on, as a rollback goes on past a delete it couldn't confirm, and Restore puts it back too.
         step.status = "unconfirmed";
         step.error = unconfirmed(step.readBack, "change");
+        // How Sophos answered when it wasn't a success: the page then doesn't say Sophos accepted the retire.
+        if (unclear) step.answer = unclear.reason.replace(/\.$/, "");
       }
     } catch (err) {
       step.status = "failed";
@@ -354,6 +361,7 @@ export async function restoreRetire(dataDir: string, ctx: TenantContext, id: str
   for (const step of order) {
     // From here the read-back and error are this restore's, set only by what it finds.
     delete step.readBack;
+    delete step.answer;
     delete step.error;
     try {
       if (step.op === "delete-entry") {

@@ -65,8 +65,15 @@ export interface WaveRecord {
   status: "moved" | "unconfirmed" | "failed" | "undone" | "undo-failed";
   /** What the read-back after the move found. Set only once Sophos accepted the change, so a wave with one was sent. */
   readBack?: string;
-  /** The same for the last undo: set only when Sophos accepted the undo but the read-back didn't confirm it. */
+  /** The same for the last undo: set only when Sophos accepted the undo, or gave no clear answer, but the read-back didn't confirm it. */
   undoReadBack?: string;
+  /**
+   * Set with readBack when Sophos didn't answer the move with a success (a 5xx, no answer in time or a dropped
+   * connection) and nothing could be read back: what it said. Without it, Sophos accepted the move. undoAnswer is the
+   * same for the last undo, with undoReadBack.
+   */
+  answer?: string;
+  undoAnswer?: string;
   error?: string;
   undoneAt?: string;
 }
@@ -267,6 +274,8 @@ export async function moveWave(dataDir: string, ctx: TenantContext, deviceIds: s
       // A read that failed doesn't show the devices are missing, only that the move isn't confirmed.
       wave.status = "unconfirmed";
       wave.readBack = back.unread ? `not read: ${back.unread}` : "assignment differs";
+      // How Sophos answered when it wasn't a success: the page then doesn't say Sophos accepted the move.
+      if (unclear) wave.answer = unclear.reason.replace(/\.$/, "");
       wave.error = back.unread ? "The tool couldn't read the pilot policy back, so the move isn't confirmed." : "The policy read back without the new devices.";
     }
   } catch (err) {
@@ -294,6 +303,7 @@ export async function undoWave(dataDir: string, ctx: TenantContext, waveId: stri
   });
   // Only this attempt's read-back counts.
   delete wave.undoReadBack;
+  delete wave.undoAnswer;
   try {
     const current = assignmentOf(read);
     // A move or an undo that wasn't confirmed may not have gone through: when the assignment is already as it was before the wave, there's nothing to put back.
@@ -311,6 +321,7 @@ export async function undoWave(dataDir: string, ctx: TenantContext, waveId: stri
       if (!back.value) {
         // Sophos accepted the undo (or gave no clear answer and nothing could be read), but the read-back didn't confirm it.
         wave.undoReadBack = back.unread ? `not read: ${back.unread}` : "assignment differs";
+        if (unclear) wave.undoAnswer = unclear.reason.replace(/\.$/, "");
         throw new Error(back.unread ? "The tool couldn't read the pilot policy back, so the undo isn't confirmed." : "The policy didn't read back with the earlier assignment.");
       }
       if (unclear) await auditOrWarn({ tenantId: t, action: "update", resource: "policy", resourceId: wave.policyId, ok: true, detail: { undoWave: wave.id, note: foundNote(unclear, "the assignment as it was before the wave", "on the pilot") } });

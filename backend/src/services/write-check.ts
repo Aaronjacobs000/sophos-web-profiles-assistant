@@ -132,15 +132,6 @@ export function notFound(err: UnclearWriteError, miss: ReadBackMiss, unread?: st
 }
 
 /**
- * Why an item was not sent: an earlier create in the same run, for an item
- * with the same name (or value), got no clear answer, so this one could make
- * a duplicate.
- */
-export function earlierUnclear(same = "name"): string {
-  return `not sent: an earlier create in this run with the same ${same} got no clear answer from Sophos, so this one could make a duplicate. Wait a minute or two, then try again: anything in the tenant by then is skipped as already there`;
-}
-
-/**
  * Sends a write that a read-back then checks. A 5xx, no answer in time or a
  * dropped connection (UnclearWriteError) can still have gone through, so it
  * comes back as unclear rather than thrown, and the caller reads back as it

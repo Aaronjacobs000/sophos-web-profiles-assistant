@@ -94,8 +94,9 @@ export interface BuildStep {
   readBack?: "matches" | "differs" | "not-read";
   readBackNote?: string;
   /**
-   * Set on a delete-failed step when Sophos accepted the rollback's delete (or gave no clear answer and nothing could be
-   * read) but the read-back didn't confirm it gone: "still there", or "not read: " and why.
+   * Set on a delete-failed step when Sophos accepted the rollback's delete, or an Allow undo's delete of the pilot allows
+   * list (or gave no clear answer and nothing could be read), but the read-back didn't confirm it gone: "still there",
+   * or "not read: " and why.
    */
   deleteReadBack?: string;
   /**

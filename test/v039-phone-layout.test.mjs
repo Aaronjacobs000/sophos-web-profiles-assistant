@@ -11,6 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import { findBrowser } from "../backend/dist/services/pdf.js";
+import { browserEnv } from "./browser.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const T = "00000000-0000-4000-a000-000000000001";
@@ -38,7 +39,8 @@ async function pageServer() {
 /** A headless browser and one page in it, driven over the DevTools protocol. */
 async function openBrowser() {
   const profile = mkdtempSync(path.join(tmpdir(), "wpa-layout-"));
-  const child = spawn(browser, ["--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", "--disable-extensions", `--user-data-dir=${profile}`, "--remote-debugging-port=0", "about:blank"], { stdio: ["ignore", "ignore", "pipe"] });
+  // Its own temp folder goes with its profile (v0.3.22), as in browser.mjs.
+  const child = spawn(browser, ["--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check", "--disable-extensions", `--user-data-dir=${profile}`, "--remote-debugging-port=0", "about:blank"], { stdio: ["ignore", "ignore", "pipe"], env: browserEnv(profile) });
   let stderr = "";
   child.stderr.on("data", (d) => (stderr = (stderr + String(d)).slice(-2000)));
   const exited = new Promise((resolve) => child.once("exit", resolve));

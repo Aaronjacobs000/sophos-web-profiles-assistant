@@ -98,6 +98,17 @@ export function unconfirmedReason(readBack, fallback = "") {
   return back.detail || fallback || (back.plain ? `Read back: ${back.plain}.` : "");
 }
 
+/**
+ * Why a write Sophos didn't answer with a success (a 5xx, no answer in time or a dropped connection) isn't confirmed,
+ * for a Detail line: what Sophos said, then what the read-back found or why it couldn't read, or, with no read-back on
+ * record, said.
+ */
+export function unansweredReason(answer, readBack, said = "") {
+  const back = readBackParts(readBack);
+  const read = back.detail || back.plain;
+  return `${sentence(answer)} ${read ? `Read back: ${sentence(read)}` : sentence(said)}`.trim();
+}
+
 /** The note on a pilot whose rollback didn't finish: what it left in the tenant, why, and what to do next. */
 export function rollbackUnfinishedBanner(pilot, tenantId) {
   const r = pilot?.rollbackUnfinished;

@@ -2,9 +2,9 @@
 // a 404, or doesn't answer in time), the server refuses to undo a promotion
 // wave with a plain message, writes nothing, and leaves the wave as it was.
 
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -13,6 +13,12 @@ import { initState } from "../backend/dist/state.js";
 import { setReadBackDelays } from "../backend/dist/services/write-check.js";
 import { undoWave } from "../backend/dist/services/promote-service.js";
 import { pilotRouter } from "../backend/dist/routes/pilot.js";
+
+// Every folder this file makes in the temp directory goes once its tests are done (v0.3.22, as in v0.3.21), so a run leaves nothing there.
+const made = [];
+after(() => {
+  for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+});
 
 const T = "00000000-0000-4000-a000-000000000001";
 const HOST = "https://api-us01.central.sophos.com";
@@ -71,6 +77,7 @@ const savedWaves = (dataDir) => JSON.parse(readFileSync(path.join(dataDir, "prom
 
 async function setup() {
   const root = mkdtempSync(path.join(tmpdir(), "wpa-v0313-"));
+  made.push(root);
   await initState(root, "0.3.13");
   setReadBackDelays([0, 0]);
   const dataDir = path.join(root, "data");
@@ -104,6 +111,7 @@ test("the other undo path stays as it was: a policy that reads is put back", asy
 // Last in this file: it configures a mock tenant credential in this process's environment.
 test("the route: POST /promote/:tenant/wave/:id/undo answers 400 with the plain message while the pilot policy can't be read", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "wpa-v0313r-"));
+  made.push(root);
   writeFileSync(path.join(root, ".env"), "CREDENTIAL_MODE=tenant\nSOPHOS_TENANT_CLIENT_ID=mock-client-id\nSOPHOS_TENANT_CLIENT_SECRET=mock-client-secret\nSOPHOS_TENANT_LABEL=Example Tenant\n");
   const tenant = new Tenant();
   const sophos = (url, init) => {

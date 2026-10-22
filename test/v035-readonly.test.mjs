@@ -2,12 +2,19 @@
 // repo, the partner tenant allow-list, and fixes from a read-only test on a
 // real customer tenant.
 
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
+import { rmSync } from "node:fs";
 import path from "node:path";
 import { guardRequest, installFetchGuard, readOnlyMode, ReadOnlyModeError } from "../backend/dist/sophos/read-only-guard.js";
 import { SophosClient } from "../backend/dist/sophos/client/sophos-client.js";
 import { storagePaths, tenantAllowList } from "../backend/dist/state.js";
+
+// Every folder this file makes in the temp directory goes once its tests are done (v0.3.22, as in v0.3.21), so a run leaves nothing there.
+const made = [];
+after(() => {
+  for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+});
 
 const ON = { READ_ONLY: "1" };
 const FUSION = "https://api-us01.central.sophos.com/endpoint/v1/settings/web-control/local-sites";
@@ -114,6 +121,7 @@ test("retiring a tag no policy uses doesn't warn about devices on classic settin
   const { previewRetire } = await import("../backend/dist/services/retire-service.js");
   const { device, wcPolicy } = await import("./fixtures.mjs");
   const root = mkdtempSync(path.join(tmpdir(), "wpa-v035-"));
+  made.push(root);
   await initState(root, "0.3.5");
   const policies = [wcPolicy({ id: "p1", name: "Base Policy", priority: 0 })];
   const api = {

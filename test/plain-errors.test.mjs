@@ -16,7 +16,9 @@
 // switch, a wave undo, a rollback, the clean-up's lists, a retire and a
 // restore), and the records carry the raw answer in every read-back field.
 // From v0.3.21 they also carry it in what Sophos said to a delete it didn't
-// answer with a success, and in an Allow's read-back of the profile.
+// answer with a success, and in an Allow's read-back of the profile. From
+// v0.3.22, in what Sophos said to a wave, a wave undo, an Allow, an Allow undo
+// and a retire step it didn't answer with a success.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -49,18 +51,18 @@ const ev = (n, url) => ({ id: `e${n}`, type: "Event::Endpoint::WebControlViolati
 const digest = { days: 7, since: null, pilotOnly: false, pilotDevices: null, imported: 0, otherWebEvents: 0, ...summarize([ev(1, "https://app.example.com/"), ev(2, "https://chat.example.org/")]) };
 const allow = (n, s, extra) => ({ id: id(n), at: now, host: `h${n}.example.com`, site: `h${n}.example.com`, buildId: "b1", profileId: "pr1", listName: "Example allows", createdList: true, status: s, buildStatus: "built", ...extra });
 const store = { days: [], total: 0, imported: 0, state: { tenantId: T, enabled: true, runs: [{ at: now, source: "api", ok: false, pages: 0, fetched: 0, web: 0, added: 0, error: RAW }] } };
-const pilotView = { pilot, policy, store, allows: [allow(1, "failed", { listName: "", error: RAW }), allow(2, "undo-failed", { error: RAW }), allow(3, "undone", { error: RAW }), allow(4, "added", { readBack: `not read: ${RAW}` }), allow(5, "undo-failed", { readBack: "site listed", undoReadBack: `not read: ${RAW}`, error: "The list couldn't be read back, so the removal isn't confirmed." }), allow(6, "added", { readBack: `not read: ${RAW}; profile links it as allow` }), allow(7, "added", { readBack: `list holds the site; profile not read: ${RAW}` })] };
+const pilotView = { pilot, policy, store, allows: [allow(1, "failed", { listName: "", error: RAW }), allow(2, "undo-failed", { error: RAW }), allow(3, "undone", { error: RAW }), allow(4, "added", { readBack: `not read: ${RAW}` }), allow(5, "undo-failed", { readBack: "site listed", undoReadBack: `not read: ${RAW}`, error: "The list couldn't be read back, so the removal isn't confirmed." }), allow(6, "added", { readBack: `not read: ${RAW}; profile links it as allow` }), allow(7, "added", { readBack: `list holds the site; profile not read: ${RAW}` }), allow(0, "added", { readBack: `not read: ${RAW}`, answer: RAW }), allow(8, "undo-failed", { readBack: "site listed", undoReadBack: `not read: ${RAW}`, undoAnswer: RAW, error: "The list couldn't be read back, so the removal isn't confirmed." })] };
 const wave = (n, s, extra) => ({ id: id(n), at: now, buildId: "b1", policyId: "p1", devices: [{ id: `w${n}`, hostname: `EXAMPLE-PC-0${n}` }], status: s, ...extra });
 const promo = {
   pilot,
   policy: { id: "p1", name: pilot.policyName, enabled: false, priority: 1, type: "web-control", endpoints: 1, endpointGroups: 0, users: 0, userGroups: 0 },
   mode: "devices",
   plan: { waves: [{ n: 1, devices: [{ id: "w9", hostname: "EXAMPLE-PC-09", group: "No group" }] }], inPilot: [{ id: "w1" }], notEligible: [] },
-  waves: [wave(1, "failed", { error: RAW, readBack: `not read: ${RAW}` }), wave(2, "undo-failed", { error: RAW }), wave(3, "undone", { error: RAW }), wave(4, "moved", { readBack: `not read: ${RAW}` }), wave(5, "undo-failed", { readBack: "assignment matches", undoReadBack: `not read: ${RAW}`, error: "The tool couldn't read the pilot policy back, so the undo isn't confirmed." })],
+  waves: [wave(1, "failed", { error: RAW, readBack: `not read: ${RAW}` }), wave(2, "undo-failed", { error: RAW }), wave(3, "undone", { error: RAW }), wave(4, "moved", { readBack: `not read: ${RAW}` }), wave(5, "undo-failed", { readBack: "assignment matches", undoReadBack: `not read: ${RAW}`, error: "The tool couldn't read the pilot policy back, so the undo isn't confirmed." }), wave(6, "unconfirmed", { readBack: `not read: ${RAW}`, answer: RAW, error: "The tool couldn't read the pilot policy back, so the move isn't confirmed." }), wave(7, "undo-failed", { readBack: "assignment matches", undoReadBack: `not read: ${RAW}`, undoAnswer: RAW, error: "The tool couldn't read the pilot policy back, so the undo isn't confirmed." })],
   waveSize: 25,
 };
 const retireStep = (extra) => ({ op: "delete-entry", url: "blocked.example.com", tags: ["Example tag"], ...extra });
-const retire = { tags: [{ tag: "Example tag", entries: 1, only: 1, policies: [] }], records: [{ id: id(5), tenantId: T, at: now, tags: ["Example tag"], snapshotFile: "example-tenant_20261016-010000.json", status: "partial", steps: [retireStep({ status: "failed", error: RAW })], warnings: [] }, { id: id(6), tenantId: T, at: now, tags: ["Example tag"], snapshotFile: "example-tenant_20261016-010000.json", status: "restore-partial", steps: [retireStep({ status: "restore-failed", readBack: `not read: ${RAW}`, error: "The tool couldn't read it back, so the restore isn't confirmed." })], warnings: [] }] };
+const retire = { tags: [{ tag: "Example tag", entries: 1, only: 1, policies: [] }], records: [{ id: id(5), tenantId: T, at: now, tags: ["Example tag"], snapshotFile: "example-tenant_20261016-010000.json", status: "partial", steps: [retireStep({ status: "failed", error: RAW })], warnings: [] }, { id: id(6), tenantId: T, at: now, tags: ["Example tag"], snapshotFile: "example-tenant_20261016-010000.json", status: "restore-partial", steps: [retireStep({ status: "restore-failed", readBack: `not read: ${RAW}`, error: "The tool couldn't read it back, so the restore isn't confirmed." })], warnings: [] }, { id: id(7), tenantId: T, at: now, tags: ["Example tag"], snapshotFile: "example-tenant_20261016-010000.json", status: "partial", steps: [retireStep({ status: "unconfirmed", readBack: `not read: ${RAW}`, answer: RAW, error: "The tool couldn't read it back, so the change isn't confirmed." })], warnings: [] }] };
 const step = (order, kind, extra) => ({ order, kind, key: kind, name: `Example ${kind}`, method: "POST", path: "/web-filters/v1/site-lists", summary: "1 site, block", body: {}, status: "planned", ...extra });
 const build = {
   id: "00000001-0000-4000-a000-000000000000", tenantId: T, createdAt: now, status: "partial", snapshotFile: "example-tenant_20261016-010000.json",
@@ -190,6 +192,16 @@ const ANSWERS = [
     steps: [click("[data-allow]"), click("#allow-go")],
     writes: { [`POST /api/pilot/${T}/allow`]: (body) => (body.dryRun ? { plan: { host: "app.example.com", site: "app.example.com", pilot, steps: [{ op: "create-list", name: "Example allows", site: "app.example.com" }, { op: "link-list", profileId: "pr1", profileName: "Example profile", priority: 2 }], problems: [], notes: [] } } : { plan: {}, entry: allow(9, "added", { readBack: `list holds the site; profile not read: ${RAW}` }) }) },
   },
+  // From v0.3.22: what Sophos said to a write it didn't answer with a success.
+  {
+    page: `/pilot.html?tenant=${T}`,
+    steps: [click("[data-allow]"), click("#allow-go")],
+    writes: { [`POST /api/pilot/${T}/allow`]: (body) => (body.dryRun ? { plan: { host: "app.example.com", site: "app.example.com", pilot, steps: [{ op: "add-site", listId: "l1", listName: "Example allows", site: "app.example.com" }], problems: [], notes: [] } } : { plan: {}, entry: allow(9, "added", { readBack: `not read: ${RAW}`, answer: RAW }) }) },
+  },
+  { page: `/pilot.html?tenant=${T}`, steps: [click('[data-undo="' + id(4) + '"]')], writes: { [`POST /api/pilot/${T}/allow/${id(4)}/undo`]: allow(4, "undo-failed", { undoReadBack: `not read: ${RAW}`, undoAnswer: RAW, error: "The list couldn't be read back, so the removal isn't confirmed." }) } },
+  { page: `/promote.html?tenant=${T}`, steps: [click("[data-wave]")], writes: { [`POST /api/promote/${T}/wave`]: (body) => (body.dryRun ? { problems: [], policyName: pilot.policyName, before: { endpoints: ["w1"], endpointGroups: [] }, after: { endpoints: ["w1", "w9"], endpointGroups: [] }, devices: [{ id: "w9", hostname: "EXAMPLE-PC-09" }], enabled: false } : wave(9, "unconfirmed", { readBack: `not read: ${RAW}`, answer: RAW, error: "The tool couldn't read the pilot policy back, so the move isn't confirmed." })) } },
+  { page: `/promote.html?tenant=${T}`, steps: [click(`[data-undo-wave="${id(4)}"]`)], writes: { [`POST /api/promote/${T}/wave/${id(4)}/undo`]: wave(4, "undo-failed", { undoReadBack: `not read: ${RAW}`, undoAnswer: RAW, error: "The tool couldn't read the pilot policy back, so the undo isn't confirmed." }) } },
+  { page: `/promote.html?tenant=${T}`, steps: [click('input[name="tag"]'), click("#plan-retire"), click("#go-retire")], writes: { [`POST /api/retire/${T}/plan`]: { tags: ["Example tag"], steps: [{ op: "delete-entry", url: "blocked.example.com", tags: ["Example tag"] }], problems: [], warnings: [] }, [`POST /api/retire/${T}/execute`]: retire.records[2] } },
 ];
 
 /** The frontend, with an API that answers reads from s.reads (or fails them all) and fails every write with the raw answer. */

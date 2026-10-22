@@ -1,9 +1,9 @@
 // v0.3.8: a rollback that didn't finish keeps the pilot on the Pilot and
 // Promote pages, and a setting refused for a line break answers 400.
 
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -16,6 +16,12 @@ import { rollback } from "../backend/dist/services/build-service.js";
 import { SophosClient } from "../backend/dist/sophos/client/sophos-client.js";
 import { credentialsRouter } from "../backend/dist/routes/credentials.js";
 import { convertRouter } from "../backend/dist/routes/convert.js";
+
+// Every folder this file makes in the temp directory goes once its tests are done (v0.3.22, as in v0.3.21), so a run leaves nothing there.
+const made = [];
+after(() => {
+  for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+});
 
 const T = "00000000-0000-4000-a000-000000000001";
 const HOST = "https://api-us01.central.sophos.com";
@@ -69,6 +75,7 @@ class MockTenant {
 
 async function setup() {
   const root = mkdtempSync(path.join(tmpdir(), "wpa-v038-"));
+  made.push(root);
   await initState(root, "0.3.8");
   setReadBackDelays([0, 0]);
   const dataDir = path.join(root, "data");
@@ -163,6 +170,7 @@ test("a rollback Sophos refuses keeps the pilot usable, and a pilot with no roll
 
 test("a setting with a line break is refused with 400 and its message, and nothing is saved or sent", async () => {
   const root = mkdtempSync(path.join(tmpdir(), "wpa-v038e-"));
+  made.push(root);
   await initState(root, "0.3.8");
   const app = express();
   app.use(express.json());

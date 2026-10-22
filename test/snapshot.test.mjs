@@ -1,5 +1,6 @@
-import { test, before } from "node:test";
+import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { rmSync } from "node:fs";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -8,12 +9,19 @@ import { initState } from "../backend/dist/state.js";
 import { saveSnapshot, loadSnapshot, listSnapshots, objectsHash, snapshotPath } from "../backend/dist/services/snapshot-store.js";
 import { inventory, ok, wcPolicy, tpPolicy } from "./fixtures.mjs";
 
+// Every folder this file makes in the temp directory goes once its tests are done (v0.3.22, as in v0.3.21), so a run leaves nothing there.
+const made = [];
+after(() => {
+  for (const dir of made.splice(0)) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+});
+
 const TOOL = { name: "web-profiles-assistant", version: "0.1.0" };
 let root;
 
 before(async () => {
   // A repo root with no .env: the state starts unconfigured and makes no network calls.
   root = await mkdtemp(path.join(os.tmpdir(), "wpa-snap-"));
+  made.push(root);
   await initState(root, "0.1.0");
 });
 

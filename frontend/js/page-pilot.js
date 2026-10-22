@@ -4,7 +4,7 @@
 
 import { api } from "./api.js";
 import { currentTenantId, getStatus, initShell, setTenant } from "./shell.js";
-import { OUTCOME_TAG, OUTCOME_TOAST, esc, escAttr, readBackParts, relTime, rollbackUnfinishedBanner, sentence, unconfirmedReason } from "./ui.js";
+import { OUTCOME_TAG, OUTCOME_TOAST, esc, escAttr, readBackParts, relTime, rollbackUnfinishedBanner, sentence, unansweredReason, unconfirmedReason } from "./ui.js";
 import { icon } from "./icons.js";
 import { toast } from "./toast.js";
 
@@ -20,8 +20,10 @@ const when = (iso) => (iso ? new Date(iso).toLocaleString("en-GB", { day: "2-dig
 
 /**
  * An Allow entry's row (category C): green only when the read-back confirmed the Allow; amber when Sophos accepted the
- * Allow or its undo but the read-back didn't confirm it; red when it failed. The plain line goes under the site, and why
- * on the Detail line. An entry undone has nothing to fix, so an error left from an earlier undo that failed isn't shown.
+ * Allow or its undo, or didn't answer it with a success (a 5xx, or no answer), but the read-back didn't confirm it; red
+ * when it failed. The plain line goes under the site, and why on the Detail line, what Sophos said first when it didn't
+ * answer with a success. An entry undone has nothing to fix, so an error left from an earlier undo that failed isn't
+ * shown.
  */
 function allowRow(a) {
   const tag = (cls, label) => `<span class="tag ${cls}">${label}</span>`;
@@ -30,8 +32,9 @@ function allowRow(a) {
   switch (a.status) {
     case "added":
       if (a.buildStatus === "rolled-back") return { tag: tag("tag-muted", "Removed with the build") };
-      return allowConfirmed(a.readBack)
-        ? { tag: tag(OUTCOME_TAG.confirmed, "Added") }
+      if (allowConfirmed(a.readBack)) return { tag: tag(OUTCOME_TAG.confirmed, "Added") };
+      return a.answer
+        ? { tag: tag(OUTCOME_TAG.unconfirmed, "Not confirmed"), note: "Sophos didn't say the Allow went through, and the read-back didn't confirm it.", detail: unansweredReason(a.answer, a.readBack) }
         : { tag: tag(OUTCOME_TAG.unconfirmed, "Not confirmed"), note: "Sophos accepted the Allow, but the read-back didn't confirm it.", detail: unconfirmedReason(a.readBack) };
     case "partial":
       // Sophos made the list, so part of the Allow went through and it can be undone (category D). A rollback deletes the list too.
@@ -42,6 +45,7 @@ function allowRow(a) {
     case "undone":
       return { tag: tag("tag-muted", "Undone") };
     case "undo-failed":
+      if (a.undoReadBack && a.undoAnswer) return { tag: tag(OUTCOME_TAG.unconfirmed, "Undo not confirmed"), note: "Sophos didn't say the undo went through, and the read-back didn't confirm it. Undo again, or check the list in Sophos Fusion.", detail: unansweredReason(a.undoAnswer, a.undoReadBack, a.error) };
       return a.undoReadBack
         ? { tag: tag(OUTCOME_TAG.unconfirmed, "Undo not confirmed"), note: "Sophos accepted the undo, but the read-back didn't confirm it. Undo again, or check the list in Sophos Fusion.", detail: unconfirmedReason(a.undoReadBack, a.error) }
         : { tag: tag(OUTCOME_TAG.failed, "Undo failed"), note: "The undo didn't finish. Undo again, or check the list in Sophos Fusion.", detail: withError };
@@ -313,6 +317,8 @@ function allowModal(plan) {
       // unconfirmed, with what was read (or why it couldn't be) on the Detail line.
       if (r.entry.status === "partial") toast(`Sophos made the list for ${r.entry.site}, but its link to the profile didn't go through. Undo it from Allow entries.`, OUTCOME_TOAST.unconfirmed, 10000, r.entry.error);
       else if (allowConfirmed(r.entry.readBack)) toast(`Allowed ${r.entry.site}: ${back.plain}.`, OUTCOME_TOAST.confirmed, 9000);
+      // Sophos didn't answer with a success (a 5xx, or no answer), so it isn't called accepted.
+      else if (r.entry.answer) toast(`Sophos didn't say the Allow for ${r.entry.site} went through, and the read-back didn't confirm it.`, OUTCOME_TOAST.unconfirmed, 10000, unansweredReason(r.entry.answer, r.entry.readBack));
       else if (back.detail) toast(`Sophos accepted the Allow for ${r.entry.site}, but ${unreadParts(back.plain)} couldn't be read back, so it isn't confirmed.`, OUTCOME_TOAST.unconfirmed, 10000, back.detail);
       else toast(`Sophos accepted the Allow for ${r.entry.site}, but the read-back didn't confirm it.`, OUTCOME_TOAST.unconfirmed, 10000, unconfirmedReason(r.entry.readBack));
       await reread();
@@ -396,9 +402,12 @@ function wire() {
       try {
         const r = await api.post(`/api/pilot/${t}/allow/${encodeURIComponent(b.dataset.undo)}/undo`, {});
         const notes = r.undo ?? [];
-        // Green only when every read-back confirmed the undo; an undo read-back on record means Sophos accepted it.
+        // Green only when every read-back confirmed the undo; an undo read-back on record means it went to Sophos, which
+        // accepted it unless it didn't answer with a success (undoAnswer).
+        const unconfirmedNotes = notes.filter((x) => !UNDO_CONFIRMED.has(x)).join(" ");
         if (r.status === "undone" && notes.length && notes.every((x) => UNDO_CONFIRMED.has(x))) toast(`Undone. ${notes.join(" ")}`, OUTCOME_TOAST.confirmed, 9000);
-        else if (r.status === "undone" || r.undoReadBack) toast(`Sophos accepted the undo for ${a?.site}, but the read-back didn't confirm it.`, OUTCOME_TOAST.unconfirmed, 10000, unconfirmedReason(r.undoReadBack, notes.filter((x) => !UNDO_CONFIRMED.has(x)).join(" ") || r.error));
+        else if ((r.status === "undone" || r.undoReadBack) && r.undoAnswer) toast(`Sophos didn't say the undo for ${a?.site} went through, and the read-back didn't confirm it.`, OUTCOME_TOAST.unconfirmed, 10000, unansweredReason(r.undoAnswer, r.undoReadBack, unconfirmedNotes || r.error));
+        else if (r.status === "undone" || r.undoReadBack) toast(`Sophos accepted the undo for ${a?.site}, but the read-back didn't confirm it.`, OUTCOME_TOAST.unconfirmed, 10000, unconfirmedReason(r.undoReadBack, unconfirmedNotes || r.error));
         else toast(`Couldn't undo the Allow for ${a?.site}.`, OUTCOME_TOAST.failed, 9000, r.error);
       } catch (err) {
         toast(`Couldn't undo the Allow for ${a?.site}.`, OUTCOME_TOAST.failed, 9000, err.message);

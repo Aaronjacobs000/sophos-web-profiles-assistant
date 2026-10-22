@@ -14,6 +14,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { tempIn } from "./browser.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const T = "00000000-0000-4000-a000-000000000001";
@@ -61,7 +62,8 @@ async function startServer(mode) {
   const refuse = path.join(dir, "refuse-policies");
   const port = await freePort();
   const child = spawn(process.execPath, ["--import", path.join(dir, "mock-sophos.mjs"), path.join(root, "backend/dist/server.js")], {
-    env: { PATH: process.env.PATH, HOME: process.env.HOME, PORT: String(port), WPA_ENV_FILE: path.join(dir, "test.env"), WPA_DATA_DIR: dataDir, SIEM_COLLECT_HOURS: "0", MOCK_MODE: mode, MOCK_REFUSE_FILE: refuse },
+    // Its temp folder, and that of any browser it starts for a PDF, is in its own folder (v0.3.22), which stop() removes.
+    env: { PATH: process.env.PATH, HOME: process.env.HOME, PORT: String(port), WPA_ENV_FILE: path.join(dir, "test.env"), WPA_DATA_DIR: dataDir, SIEM_COLLECT_HOURS: "0", MOCK_MODE: mode, MOCK_REFUSE_FILE: refuse, ...tempIn(dir) },
     stdio: ["ignore", "pipe", "pipe"],
   });
   const out = { text: "" };

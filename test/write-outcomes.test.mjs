@@ -10,6 +10,9 @@
 //                confirmed wording, and the reason on a Detail line
 //   failed       red (toast-err, banner-err, tag-bad), never the confirmed
 //                wording, and the reason on a Detail line
+// From v0.3.22 a write Sophos didn't answer with a success (a 5xx, or no
+// answer), that nothing could be read back after, is answered too
+// (unanswered): drawn as unconfirmed, and never saying Sophos accepted it.
 // A new action or row that reports a write's outcome belongs in this table.
 
 import { test } from "node:test";
@@ -25,6 +28,7 @@ import { openBrowser, skipBrowser } from "./browser.mjs";
 const T = "00000000-0000-4000-a000-000000000001";
 const RAW = "Sophos API error 503: ServiceUnavailable - mock refuses this";
 const NOT_READ = `not read: ${RAW}`;
+const UNCLEAR = "Sophos API error 500: InternalServerError - mock answers 500";
 const tenant = { tenantId: T, displayName: "Example Tenant", region: "us01", apiHost: "https://api-us01.central.sophos.com", credentialType: "tenant" };
 const status = { status: "configured-ok", mode: "tenant", error: null, tenant, partner: null, version: "0.3.19", readOnly: false };
 const now = new Date().toISOString();
@@ -218,6 +222,7 @@ const ACTIONS = [
     steps: [click("[data-allow]"), until(`!!document.querySelector("#allow-go")`), click("#allow-go")],
     confirmed: allowWrite(allowEntry({ readBack: "site listed" })),
     unconfirmed: [allowWrite(allowEntry({ readBack: NOT_READ })), allowWrite(allowEntry({ readBack: "not found" })), allowWrite(allowEntry({ readBack: "list holds the site; profile read back without the link" })), allowWrite(allowEntry({ readBack: `${NOT_READ}; profile links it as allow` }))],
+    unanswered: [allowWrite(allowEntry({ readBack: NOT_READ, answer: UNCLEAR }))],
     failed: [allowWrite(FAIL)],
   },
   {
@@ -227,6 +232,7 @@ const ACTIONS = [
     steps: [click("[data-undo]")],
     confirmed: undoAllowWrite(allow(1, "undone", { undo: ["Site removed, confirmed on read-back."] })),
     unconfirmed: [undoAllowWrite(allow(1, "undo-failed", { undoReadBack: NOT_READ, error: "The list couldn't be read back, so the removal isn't confirmed.", undo: ["The list couldn't be read back, so the removal isn't confirmed."] })), undoAllowWrite(allow(1, "undone", { undo: ["The profile couldn't be read back, so the unlink isn't confirmed.", "List deleted, 404 on read-back."] }))],
+    unanswered: [undoAllowWrite(allow(1, "undo-failed", { undoReadBack: NOT_READ, undoAnswer: UNCLEAR, error: "The list couldn't be read back, so the removal isn't confirmed.", undo: ["The list couldn't be read back, so the removal isn't confirmed."] })), undoAllowWrite(allow(1, "undone", { undoAnswer: UNCLEAR, undo: ["The profile couldn't be read back, so the unlink isn't confirmed.", "List deleted, 404 on read-back."] }))],
     failed: [undoAllowWrite(allow(1, "undo-failed", { error: RAW, undo: [] })), undoAllowWrite(FAIL)],
   },
   {
@@ -262,6 +268,7 @@ const ACTIONS = [
     steps: [click("[data-wave]")],
     confirmed: moveWrite(newWave("moved", { readBack: "assignment matches" })),
     unconfirmed: [moveWrite(newWave("moved", { readBack: NOT_READ })), moveWrite(newWave("failed", { readBack: NOT_READ, error: "The tool couldn't read the pilot policy back, so the move isn't confirmed." })), moveWrite(newWave("failed", { readBack: "assignment differs", error: "The policy read back without the new devices." }))],
+    unanswered: [moveWrite(newWave("unconfirmed", { readBack: NOT_READ, answer: UNCLEAR, error: "The tool couldn't read the pilot policy back, so the move isn't confirmed." }))],
     failed: [moveWrite(newWave("failed", { error: RAW })), moveWrite(FAIL)],
   },
   {
@@ -271,6 +278,7 @@ const ACTIONS = [
     steps: [click("[data-undo-wave]")],
     confirmed: undoWaveWrite(wave(1, "undone", { readBack: "assignment back as before the wave" })),
     unconfirmed: [undoWaveWrite(wave(1, "undo-failed", { readBack: "assignment matches", undoReadBack: NOT_READ, error: "The tool couldn't read the pilot policy back, so the undo isn't confirmed." })), undoWaveWrite(wave(1, "undo-failed", { readBack: "assignment matches", undoReadBack: "assignment differs", error: "The policy didn't read back with the earlier assignment." }))],
+    unanswered: [undoWaveWrite(wave(1, "undo-failed", { readBack: "assignment matches", undoReadBack: NOT_READ, undoAnswer: UNCLEAR, error: "The tool couldn't read the pilot policy back, so the undo isn't confirmed." }))],
     failed: [undoWaveWrite(wave(1, "undo-failed", { readBack: "assignment matches", error: RAW })), undoWaveWrite(FAIL)],
   },
   {
@@ -284,6 +292,7 @@ const ACTIONS = [
       retireWrite(retireRec(9, "partial", [tagStep("done", { readBack: "tags match" }), delStep("failed", { error: RAW })])),
       retireWrite(retireRec(9, "partial", [tagStep("done", { readBack: "tags match" }), delStep("failed", { readBack: "still there", error: "Read back: still there." })])),
     ],
+    unanswered: [retireWrite(retireRec(9, "partial", [tagStep("unconfirmed", { readBack: NOT_READ, answer: UNCLEAR, error: "The tool couldn't read it back, so the change isn't confirmed." }), delStep("done", { readBack: "404 on read-back" })]))],
     failed: [retireWrite(retireRec(9, "failed", [tagStep("failed", { error: RAW }), delStep("planned")])), retireWrite(FAIL)],
   },
   {
@@ -340,8 +349,9 @@ const sentences = (t) => t.split(/(?<=[.!?])\s+/).map((x) => x.trim()).filter(Bo
 function judge(where, state, got, confirmedText) {
   const out = [];
   if (!got) return [`${where}: no message`];
-  const want = { confirmed: "ok", unconfirmed: "warn", failed: "err" }[state];
+  const want = { confirmed: "ok", unconfirmed: "warn", unanswered: "warn", failed: "err" }[state];
   if (got.kind !== want) out.push(`${where}: ${state} drawn as ${got.kind || "no color"}, not ${want}: "${got.text}"`);
+  if (state === "unanswered" && /\baccepted\b/i.test(got.text)) out.push(`${where}: says Sophos accepted a write it didn't answer with a success: "${got.text}"`);
   if (state !== "confirmed") {
     if (!got.detail.replace(/^Detail:\s*/, "").trim()) out.push(`${where}: ${state} without a reason on the Detail line: "${got.text}"`);
     if (confirmedText) {
@@ -361,7 +371,7 @@ test("no toast or banner after a write claims more than its read-back confirmed"
     const wrong = [];
     for (const a of ACTIONS) {
       let confirmedText = "";
-      const runs = [...(a.confirmed ? [["confirmed", a.confirmed]] : []), ...(a.unconfirmed ?? []).map((w) => ["unconfirmed", w]), ...(a.failed ?? []).map((w) => ["failed", w])];
+      const runs = [...(a.confirmed ? [["confirmed", a.confirmed]] : []), ...(a.unconfirmed ?? []).map((w) => ["unconfirmed", w]), ...(a.unanswered ?? []).map((w) => ["unanswered", w]), ...(a.failed ?? []).map((w) => ["failed", w])];
       for (const [i, [state, writes]] of runs.entries()) {
         const where = `${a.name} (${state} ${i})`;
         s.writes = writes;
@@ -401,7 +411,8 @@ test("no toast or banner after a write claims more than its read-back confirmed"
 /**
  * Each list of rows that reports a write's outcome, with records in every
  * state, and how to read each row's tag and Detail line. state: confirmed,
- * unconfirmed, failed, or done (an outcome with nothing to confirm now, such
+ * unconfirmed, unanswered (unconfirmed, with a note that never says Sophos
+ * accepted it), failed, or done (an outcome with nothing to confirm now, such
  * as undone or rolled back, drawn muted).
  */
 const ROWS = [
@@ -434,10 +445,12 @@ const ROWS = [
       wave(6, "undone", { readBack: "assignment back as before the wave" }),
       wave(7, "undo-failed", { readBack: "assignment matches", undoReadBack: NOT_READ, error: "The tool couldn't read the pilot policy back, so the undo isn't confirmed." }),
       wave(8, "undo-failed", { readBack: "assignment matches", error: RAW }),
+      wave(9, "unconfirmed", { readBack: NOT_READ, answer: UNCLEAR, error: "The tool couldn't read the pilot policy back, so the move isn't confirmed." }),
+      wave(10, "undo-failed", { readBack: "assignment matches", undoReadBack: NOT_READ, undoAnswer: UNCLEAR, error: "The tool couldn't read the pilot policy back, so the undo isn't confirmed." }),
     ]) },
     rows: ".wave-list > li",
     scope: "Waves moved",
-    states: ["confirmed", "unconfirmed", "unconfirmed", "unconfirmed", "failed", "done", "unconfirmed", "failed"],
+    states: ["confirmed", "unconfirmed", "unconfirmed", "unconfirmed", "failed", "done", "unconfirmed", "failed", "unanswered", "unanswered"],
   },
   {
     name: "Pilot: Allow entries",
@@ -453,10 +466,12 @@ const ROWS = [
       allow(8, "undo-failed", { readBack: "site listed", undoReadBack: NOT_READ, error: "The list couldn't be read back, so the removal isn't confirmed." }),
       allow(9, "undo-failed", { readBack: "site listed", error: RAW }),
       allow(10, "added", { readBack: NOT_READ, buildStatus: "rolled-back" }),
+      allow(11, "added", { readBack: NOT_READ, answer: UNCLEAR }),
+      allow(12, "undo-failed", { readBack: "site listed", undoReadBack: NOT_READ, undoAnswer: UNCLEAR, error: "The list couldn't be read back, so the removal isn't confirmed." }),
     ] } },
     rows: ".order-list > li",
     scope: "Allow entries",
-    states: ["confirmed", "confirmed", "unconfirmed", "unconfirmed", "unconfirmed", "failed", "done", "unconfirmed", "failed", "done"],
+    states: ["confirmed", "confirmed", "unconfirmed", "unconfirmed", "unconfirmed", "failed", "done", "unconfirmed", "failed", "done", "unanswered", "unanswered"],
   },
   {
     name: "Promote: Retired",
@@ -469,9 +484,10 @@ const ROWS = [
       retireRec(5, "restored", [tagStep("restored", { readBack: "tags match" })]),
       retireRec(6, "restore-partial", [tagStep("restore-failed", { readBack: "tags differ", error: "Read back: tags differ." }), delStep("restored", { readBack: "re-created, matches" })]),
       retireRec(7, "restore-partial", [tagStep("restore-failed", { error: RAW }), delStep("restore-failed", { error: RAW })]),
+      retireRec(8, "partial", [tagStep("unconfirmed", { readBack: NOT_READ, answer: UNCLEAR, error: "The tool couldn't read it back, so the change isn't confirmed." }), delStep("done", { readBack: "404 on read-back" })]),
     ] } },
     rows: ".retired-table tbody tr",
-    states: ["confirmed", "failed", "unconfirmed", "unconfirmed", "done", "unconfirmed", "failed"],
+    states: ["confirmed", "failed", "unconfirmed", "unconfirmed", "done", "unconfirmed", "failed", "unanswered"],
   },
 ];
 
@@ -481,7 +497,9 @@ const ROWS_LOOK = (sel, scope) => `(() => {
   return [...root.querySelectorAll(${JSON.stringify(sel)})].map((r) => {
     const t = r.querySelector(".tag");
     const d = r.querySelector("[data-error-detail], [data-allow-detail]");
-    return { cls: [...(t?.classList ?? [])].find((c) => /^tag-(ok|warn|bad|muted)$/.test(c)) ?? "", tag: t?.textContent.trim() ?? "", detail: d?.textContent.replace(/^Detail:\\s*/, "").trim() ?? "" };
+    const k = r.cloneNode(true);
+    k.querySelectorAll("[data-error-detail], [data-allow-detail]").forEach((x) => x.remove());
+    return { cls: [...(t?.classList ?? [])].find((c) => /^tag-(ok|warn|bad|muted)$/.test(c)) ?? "", tag: t?.textContent.trim() ?? "", detail: d?.textContent.replace(/^Detail:\\s*/, "").trim() ?? "", text: k.textContent };
   });
 })()`;
 
@@ -500,9 +518,10 @@ test("no row that reports a write's outcome claims more than its read-back confi
       rows.forEach((r, i) => {
         const state = list.states[i];
         const where = `${list.name}, row ${i + 1} (${state})`;
-        const want = { confirmed: "tag-ok", unconfirmed: "tag-warn", failed: "tag-bad", done: "tag-muted" }[state];
+        const want = { confirmed: "tag-ok", unconfirmed: "tag-warn", unanswered: "tag-warn", failed: "tag-bad", done: "tag-muted" }[state];
         if (r.cls !== want) wrong.push(`${where}: tag "${r.tag}" is ${r.cls || "no color"}, not ${want}`);
-        if (state === "unconfirmed" || state === "failed") {
+        if (state === "unanswered" && /\baccepted\b/i.test(r.text)) wrong.push(`${where}: says Sophos accepted a write it didn't answer with a success`);
+        if (state === "unconfirmed" || state === "unanswered" || state === "failed") {
           if (confirmedTags.has(r.tag)) wrong.push(`${where}: uses the confirmed label "${r.tag}"`);
           if (!r.detail) wrong.push(`${where}: no reason on the Detail line`);
         }
