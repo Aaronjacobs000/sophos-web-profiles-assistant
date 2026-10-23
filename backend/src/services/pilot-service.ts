@@ -138,7 +138,10 @@ export interface AllowEntry {
   createdList: boolean;
   /** The profile's site list settings before the list was linked, for the undo. */
   profileBefore?: { filterBySiteList?: boolean; siteListActions: NonNullable<WebProfile["siteListActions"]> };
-  /** partial: Sophos made the pilot allows list, but its link to the profile didn't go through (or isn't confirmed), so it can be undone. */
+  /**
+   * partial: Sophos made the pilot allows list, but its link to the profile didn't go through, or Sophos didn't answer it
+   * with a success and no read of the profile worked (answer, and "profile not read: " in readBack), so it can be undone.
+   */
   status: "added" | "partial" | "failed" | "undone" | "undo-failed";
   /**
    * What the read-back found: the site ("site listed", "not found"), or a new list ("list holds the site", "list read back
@@ -150,8 +153,9 @@ export interface AllowEntry {
   undoReadBack?: string;
   /**
    * Set when Sophos didn't answer a write with a success (a 5xx, no answer in time or a dropped connection) and nothing
-   * could be read back after it: what it said. answer is the Allow's (with readBack), undoAnswer the last undo's. Without
-   * it, Sophos accepted the write.
+   * could be read back after it, or after a new list it answered that way was found by name but not read back holding
+   * the site: what it said. answer is the Allow's (with readBack), undoAnswer the last undo's. Without it, Sophos
+   * accepted the write.
    */
   answer?: string;
   undoAnswer?: string;
@@ -172,6 +176,9 @@ function recordPath(dataDir: string, tenantId: string): string {
 
 /** The Allow entries that can be undone: added, partial, and an undo that didn't finish. */
 export const ALLOW_UNDOABLE: ReadonlyArray<AllowEntry["status"]> = ["added", "partial", "undo-failed"];
+
+/** A partial Allow whose link Sophos didn't answer with a success, with no read of the profile after it: whether the list is linked isn't known. */
+const linkUnknown = (a: AllowEntry) => a.status === "partial" && !!a.answer && /(^|; )profile not read: /.test(a.readBack ?? "");
 
 export async function loadPilotRecord(dataDir: string, tenantId: string): Promise<PilotRecord> {
   const text = await readText(recordPath(dataDir, tenantId), SECTION).catch(() => null);
@@ -281,7 +288,7 @@ export async function planAllow(dataDir: string, ctx: TenantContext, host: strin
     const taken = lists.find((l) => l.name.toLowerCase() === name.toLowerCase());
     // A list an earlier Allow made whose link didn't go through is this pilot's: undoing that Allow deletes it.
     const partial = taken && record.allows.find((x) => x.status === "partial" && x.listId === taken.id);
-    if (partial) plan.problems.push(`The site list "${name}" from the Allow for ${partial.site} is in the tenant, but its link to the profile didn't go through. Undo that Allow first, then allow this site again.`);
+    if (partial) plan.problems.push(`The site list "${name}" from the Allow for ${partial.site} is in the tenant, but its link to the profile ${linkUnknown(partial) ? "isn't confirmed" : "didn't go through"}. Undo that Allow first, then allow this site again.`);
     else if (taken) plan.problems.push(`A site list named "${name}" already exists but isn't this pilot's; rename it first.`);
     const priority = Math.max(0, ...actions.map((a) => a.priority)) + 1;
     plan.steps.push({ op: "create-list", name, site }, { op: "link-list", profileId: pilot.profileId, profileName: pilot.profileName, priority });
@@ -328,7 +335,7 @@ export async function addAllow(dataDir: string, ctx: TenantContext, host: string
         if (unclear && back.unread) entry.answer = unclear.reason.replace(/\.$/, "");
       } else if (step.op === "create-list") {
         const body = { name: step.name, description: "Narrow Allow entries added from the pilot digest (Web Profiles Assistant, unofficial).", sites: [site] };
-        const { value } = await auditedCreate(
+        const { value, unclear } = await auditedCreate(
           t,
           "site-list",
           () => createSiteList(api, t, body),
@@ -346,6 +353,8 @@ export async function addAllow(dataDir: string, ctx: TenantContext, host: string
           return l.sites ?? (await listSites(ro, t, value.id)).map((x) => x.site);
         });
         entry.readBack = back.value ? (back.value.map((x) => x.toLowerCase()).includes(site) ? "list holds the site" : "list read back without the site") : `not read: ${back.unread ?? "no read-back"}`;
+        // Found by name after a 5xx says it was made, not what's in it: unless it read back holding the site, the page doesn't say Sophos accepted the Allow.
+        if (unclear && entry.readBack !== "list holds the site") entry.answer = unclear.reason.replace(/\.$/, "");
         // The build owns the list from here, so rolling the build back deletes it.
         const build = await getBuild(dataDir, t, plan.pilot.buildId);
         build.steps.push({
@@ -375,7 +384,14 @@ export async function addAllow(dataDir: string, ctx: TenantContext, host: string
           return (p.siteListActions ?? []).some((a) => a.id === entry.listId && a.action === "allow" && a.priority === step.priority) ? p : null;
         });
         // No clear answer, and the link didn't read back (or nothing could be read): not confirmed linked, so the entry is partial and its list can be undone.
-        if (unclear && !back.value) throw notFound(unclear, { where: `the profile "${step.profileName}"`, found: "no link to the list in it", advice: "Undo it from Allow entries, then allow the site again.", check: `the profile "${step.profileName}" in Sophos Fusion` }, back.unread);
+        if (unclear && !back.value) {
+          // Nothing read: the link may have gone through, so the entry keeps what Sophos said and why the profile wasn't read, and the page doesn't say it didn't.
+          if (back.unread) {
+            entry.readBack = `${entry.readBack}; profile not read: ${back.unread}`;
+            entry.answer = unclear.reason.replace(/\.$/, "");
+          }
+          throw notFound(unclear, { where: `the profile "${step.profileName}"`, found: "no link to the list in it", advice: "Undo it from Allow entries, then allow the site again.", check: `the profile "${step.profileName}" in Sophos Fusion` }, back.unread);
+        }
         if (unclear) await auditOrWarn({ tenantId: t, action: "update", resource: "profile", resourceId: step.profileId, ok: true, detail: { linkList: entry.listId, note: foundNote(unclear, "the link to the list", "in the profile") } });
         // A profile no read worked on says why it wasn't read, never that it read back without the link.
         entry.readBack = `${entry.readBack}; ${back.value ? "profile links it as allow" : back.unread ? `profile not read: ${back.unread}` : "profile read back without the link"}`;
@@ -400,8 +416,9 @@ const allowConfirmed = (readBack: string | undefined) => !!readBack && readBack.
  * Marks the pilot allows list in the build record as deleted, or as a delete that didn't finish, so a rollback knows.
  * A delete that wasn't confirmed keeps its read-back ("still there", or "not read: " and why), and what Sophos said when
  * it didn't answer with a success, as a rollback keeps them, so the Build page shows it as not confirmed, not failed.
+ * One that failed keeps why (error), for the Build page's Detail line.
  */
-async function markListDeleted(dataDir: string, tenantId: string, buildId: string, listId: string, outcome: { gone: boolean; readBack?: string; answer?: string }): Promise<void> {
+async function markListDeleted(dataDir: string, tenantId: string, buildId: string, listId: string, outcome: { gone: boolean; readBack?: string; answer?: string; error?: string }): Promise<void> {
   const build = await getBuild(dataDir, tenantId, buildId).catch(() => null);
   const step = build?.steps.find((s) => s.id === listId);
   if (!build || !step) return;
@@ -410,6 +427,8 @@ async function markListDeleted(dataDir: string, tenantId: string, buildId: strin
   else delete step.deleteReadBack;
   if (outcome.readBack && outcome.answer) step.deleteAnswer = outcome.answer;
   else delete step.deleteAnswer;
+  if (!outcome.gone && !outcome.readBack && outcome.error) step.deleteError = outcome.error;
+  else delete step.deleteError;
   await saveRecord(dataDir, build);
 }
 
@@ -480,10 +499,11 @@ export async function undoAllow(dataDir: string, ctx: TenantContext, allowId: st
       notes.push(gone.value ? "List deleted, 404 on read-back." : gone.unread ? "The list couldn't be read back, so the delete isn't confirmed." : "List still there after delete.");
       // Not confirmed gone after a delete Sophos accepted, or one it gave no clear answer to and nothing could be read: kept, as a rollback keeps it.
       const kept = gone.value || (unclear && !gone.unread) ? undefined : gone.unread ? `not read: ${gone.unread}` : "still there";
-      await markListDeleted(dataDir, t, entry.buildId, listId, { gone: !!gone.value, readBack: kept, answer: unclear?.reason.replace(/\.$/, "") });
+      // No clear answer, and a read-back still found it: not deleted, as a rollback counts it, and the build step says why.
+      const stillThere = unclear && !gone.value && !gone.unread ? `${unclear.reason.replace(/\.$/, "")}. A read-back still found the list, so it wasn't deleted.` : undefined;
+      await markListDeleted(dataDir, t, entry.buildId, listId, { gone: !!gone.value, readBack: kept, answer: unclear?.reason.replace(/\.$/, ""), error: stillThere });
       if (unclear && gone.value) await auditOrWarn({ tenantId: t, action: "delete", resource: "site-list", resourceId: listId, ok: true, detail: { undo: entry.id, note: `${unclear.status ? `Sophos answered ${unclear.status}` : "Sophos gave no clear answer"}, then a read-back found it gone (404)` } });
-      // No clear answer, and a read-back still found it: not deleted, as a rollback counts it.
-      if (unclear && !gone.value && !gone.unread) throw new Error(`${unclear.reason.replace(/\.$/, "")}. A read-back still found the list, so it wasn't deleted. Undo again in a minute or two.`);
+      if (stillThere) throw new Error(`${stillThere} Undo again in a minute or two.`);
       if (!gone.value) {
         entry.undoReadBack = gone.unread ? `not read: ${gone.unread}` : "list still there";
         if (unclear) entry.undoAnswer ??= unclear.reason.replace(/\.$/, "");

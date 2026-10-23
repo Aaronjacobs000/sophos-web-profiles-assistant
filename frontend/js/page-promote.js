@@ -328,7 +328,9 @@ function wire() {
     try {
       const r = await api.post(`/api/promote/${t}/enabled`, { enabled: on });
       // Green only when the read-back confirmed it; why it isn't confirmed goes on the Detail line, never the read-back itself in the message.
+      // Sophos accepted it unless it didn't answer with a success (answer), and then nothing could be read back.
       if (r.readBack === "matches") toast(`Pilot turned ${word} and read back.`, OUTCOME_TOAST.confirmed, 8000);
+      else if (r.answer) toast(`Sophos didn't say turning the pilot ${word} went through, and the read-back didn't confirm it.`, OUTCOME_TOAST.unconfirmed, 10000, unansweredReason(r.answer, r.readBack));
       else toast(`Sophos accepted turning the pilot ${word}, but the read-back didn't confirm it.`, OUTCOME_TOAST.unconfirmed, 10000, readBackParts(r.readBack).detail || `The pilot policy read back still ${on ? "off" : "on"}.`);
     } catch (err) {
       toast(`Couldn't turn the pilot ${word}.`, OUTCOME_TOAST.failed, 9000, err.message);

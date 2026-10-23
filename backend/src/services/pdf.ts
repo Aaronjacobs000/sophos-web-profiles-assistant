@@ -45,7 +45,14 @@ export function findBrowser(): string | null {
   return candidates().find((p) => existsSync(p)) ?? null;
 }
 
-/** Prints the HTML to a PDF and returns its bytes. */
+/** How long a browser stopped after the timeout gets to exit before it's killed, and then before the export gives up on it. */
+const STOP_GRACE_MS = 5_000;
+
+/**
+ * Prints the HTML to a PDF and returns its bytes. Everything it writes, the
+ * browser's own temp folders included, is in one folder it removes when it's
+ * done, whether the PDF was made or not.
+ */
 export async function htmlToPdf(html: string, timeoutMs = 60_000): Promise<Buffer> {
   const browser = findBrowser();
   if (!browser) throw new NoBrowserError();
@@ -53,6 +60,10 @@ export async function htmlToPdf(html: string, timeoutMs = 60_000): Promise<Buffe
   try {
     const input = path.join(dir, "report.html");
     const output = path.join(dir, "report.pdf");
+    // The browser makes temp folders of its own (its singleton socket, a component download it starts) and can leave
+    // them, so its temp folder is in dir. Chrome on macOS takes MAC_CHROMIUM_TMPDIR, on Windows TMP and TEMP, else TMPDIR.
+    const temp = path.join(dir, "tmp");
+    await fs.mkdir(temp);
     await fs.writeFile(input, html, "utf8");
     const args = [
       "--headless=new",
@@ -66,25 +77,43 @@ export async function htmlToPdf(html: string, timeoutMs = 60_000): Promise<Buffe
       pathToFileURL(input).href,
     ];
     await new Promise<void>((resolve, reject) => {
-      const child = spawn(browser, args, { stdio: ["ignore", "ignore", "pipe"] });
+      const child = spawn(browser, args, { stdio: ["ignore", "ignore", "pipe"], env: { ...process.env, TMPDIR: temp, TMP: temp, TEMP: temp, MAC_CHROMIUM_TMPDIR: temp } });
       let stderr = "";
       child.stderr.on("data", (d) => (stderr = (stderr + String(d)).slice(-2000)));
-      const timer = setTimeout(() => {
-        child.kill();
-        reject(new Error(`The browser didn't finish the PDF within ${timeoutMs / 1000} s.`));
-      }, timeoutMs);
-      child.on("error", (err) => {
-        clearTimeout(timer);
-        reject(err);
-      });
+      let settled = false;
+      const timers: NodeJS.Timeout[] = [];
+      const settle = (err?: Error) => {
+        if (settled) return;
+        settled = true;
+        timers.forEach(clearTimeout);
+        if (err) reject(err);
+        else resolve();
+      };
+      const late = new Error(`The browser didn't finish the PDF within ${timeoutMs / 1000} s.`);
+      let stopped = false;
+      timers.push(
+        setTimeout(() => {
+          // A browser stopped still writes in dir as it exits, so the export waits for it to exit before dir goes.
+          stopped = true;
+          child.kill();
+          timers.push(
+            setTimeout(() => {
+              child.kill("SIGKILL");
+              timers.push(setTimeout(() => settle(late), STOP_GRACE_MS));
+            }, STOP_GRACE_MS),
+          );
+        }, timeoutMs),
+      );
+      child.on("error", (err) => settle(err));
       child.on("exit", (code) => {
-        clearTimeout(timer);
-        if (existsSync(output)) resolve();
-        else reject(new Error(`The browser exited (${code}) without a PDF. ${stderr.trim().split("\n").slice(-2).join(" ")}`));
+        if (stopped) settle(late);
+        else if (existsSync(output)) settle();
+        else settle(new Error(`The browser exited (${code}) without a PDF. ${stderr.trim().split("\n").slice(-2).join(" ")}`));
       });
     });
     return await fs.readFile(output);
   } finally {
-    await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+    // Retried, as a helper process of the browser can still be closing a file in it.
+    await fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(() => {});
   }
 }

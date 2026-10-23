@@ -39,6 +39,8 @@ function allowRow(a) {
     case "partial":
       // Sophos made the list, so part of the Allow went through and it can be undone (category D). A rollback deletes the list too.
       if (a.buildStatus === "rolled-back") return { tag: tag("tag-muted", "Removed with the build") };
+      // Sophos didn't answer the link with a success and the profile couldn't be read after, so it isn't known whether it went through.
+      if (linkUnknown(a)) return { tag: tag(OUTCOME_TAG.unconfirmed, "Not confirmed"), note: LINK_UNKNOWN_NOTE, detail: unansweredReason(a.answer, a.readBack) };
       return { tag: tag(OUTCOME_TAG.unconfirmed, "Not finished"), note: PARTIAL_NOTE, detail: withError };
     case "failed":
       return { tag: tag(OUTCOME_TAG.failed, "Failed"), note: "The Allow didn't finish.", detail: withError };
@@ -130,8 +132,11 @@ function tiles() {
   </div>`;
 }
 
-// An Allow whose list Sophos made but whose link to the profile didn't go through (or isn't confirmed).
+// An Allow whose list Sophos made but whose link to the profile didn't go through.
 const PARTIAL_NOTE = "Sophos made the list, but its link to the profile didn't go through, so the Allow may not be in effect. Undo removes the list.";
+// One whose link Sophos didn't answer with a success, with no read of the profile after it: whether it's linked isn't known.
+const LINK_UNKNOWN_NOTE = "Sophos made the list, but didn't say its link to the profile went through, and the read-back didn't confirm it. Undo removes the list.";
+const linkUnknown = (a) => a.status === "partial" && !!a.answer && /(^|; )profile not read$/.test(readBackParts(a.readBack).plain);
 
 // What a read-back says when it confirms an Allow: the site in the list, and a new list linked to the profile.
 const CONFIRMED = new Set(["site listed", "list holds the site", "profile links it as allow"]);
@@ -315,7 +320,8 @@ function allowModal(plan) {
       const back = readBackParts(r.entry.readBack);
       // Green only when the read-back confirmed the Allow; a list that couldn't be read, or a read-back without the site or link, leaves it
       // unconfirmed, with what was read (or why it couldn't be) on the Detail line.
-      if (r.entry.status === "partial") toast(`Sophos made the list for ${r.entry.site}, but its link to the profile didn't go through. Undo it from Allow entries.`, OUTCOME_TOAST.unconfirmed, 10000, r.entry.error);
+      if (linkUnknown(r.entry)) toast(`Sophos made the list for ${r.entry.site}, but didn't say its link to the profile went through, and the read-back didn't confirm it. Undo it from Allow entries.`, OUTCOME_TOAST.unconfirmed, 10000, unansweredReason(r.entry.answer, r.entry.readBack));
+      else if (r.entry.status === "partial") toast(`Sophos made the list for ${r.entry.site}, but its link to the profile didn't go through. Undo it from Allow entries.`, OUTCOME_TOAST.unconfirmed, 10000, r.entry.error);
       else if (allowConfirmed(r.entry.readBack)) toast(`Allowed ${r.entry.site}: ${back.plain}.`, OUTCOME_TOAST.confirmed, 9000);
       // Sophos didn't answer with a success (a 5xx, or no answer), so it isn't called accepted.
       else if (r.entry.answer) toast(`Sophos didn't say the Allow for ${r.entry.site} went through, and the read-back didn't confirm it.`, OUTCOME_TOAST.unconfirmed, 10000, unansweredReason(r.entry.answer, r.entry.readBack));
