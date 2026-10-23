@@ -339,16 +339,24 @@ export async function undoWave(dataDir: string, ctx: TenantContext, waveId: stri
   return wave;
 }
 
-/** Turns the pilot policy on or off, read back: "matches", "differs", or "not read: " and why when no read worked. */
-export async function setPilotEnabled(dataDir: string, ctx: TenantContext, enabled: boolean): Promise<{ enabled: boolean; readBack: string }> {
+/**
+ * Turns the pilot policy on or off, read back: "matches", "differs", or "not read: " and why when no read worked. A 5xx
+ * or no answer is read back too: found as asked, it's done; found as it was, it's refused like a 4xx; not read, answer
+ * says what Sophos said, so the page doesn't call it accepted.
+ */
+export async function setPilotEnabled(dataDir: string, ctx: TenantContext, enabled: boolean): Promise<{ enabled: boolean; readBack: string; answer?: string }> {
   const t = ctx.tenantId;
   const pilot = await activePilot(dataDir, t);
   if (!pilot) throw new Error("There's no pilot yet.");
   const api: TenantApi = ctx.client;
-  await auditedWrite({ tenantId: t }, "update", "policy", pilot.policyId, () => patchPolicy(api, t, pilot.policyId, { enabled }), { enabled });
+  const { unclear } = await sendChecked(() => auditedWrite({ tenantId: t }, "update", "policy", pilot.policyId, () => patchPolicy(api, t, pilot.policyId, { enabled }), { enabled }));
   const back = await readBack(async () => {
     const p = await getPolicy(new ReadOnlyApi(api), t, pilot.policyId);
     return (p.enabled ?? true) === enabled ? p : null;
   });
-  return { enabled, readBack: back.value ? "matches" : back.unread ? `not read: ${back.unread}` : "differs" };
+  const [now, was] = enabled ? ["on", "off"] : ["off", "on"];
+  // No clear answer, and the pilot read back as it was: not changed, as a rollback counts a delete still found.
+  if (unclear && !back.value && !back.unread) throw new Error(`${unclear.reason.replace(/\.$/, "")}. A read-back found the pilot still ${was}, so it wasn't turned ${now}.`);
+  if (unclear && back.value) await auditOrWarn({ tenantId: t, action: "update", resource: "policy", resourceId: pilot.policyId, ok: true, detail: { enabled, note: foundNote(unclear, `the pilot ${now}`, "in the tenant") } });
+  return { enabled, readBack: back.value ? "matches" : back.unread ? `not read: ${back.unread}` : "differs", ...(unclear && !back.value ? { answer: unclear.reason.replace(/\.$/, "") } : {}) };
 }

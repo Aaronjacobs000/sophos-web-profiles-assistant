@@ -40,7 +40,7 @@ import {
   getProfileMetadata,
 } from "../sophos/api/web-filters.js";
 import { createPolicy, deletePolicy, getPolicy, listPolicies, patchPolicy, type Policy } from "../sophos/api/policies.js";
-import { createLocalSite, deleteLocalSite, listLocalSites, patchLocalSite } from "../sophos/api/web-control.js";
+import { createLocalSite, deleteLocalSite, getLocalSite, listLocalSites, patchLocalSite } from "../sophos/api/web-control.js";
 import { findUsers, listEndpointGroups, listUserGroups } from "../sophos/api/directory.js";
 import { listAllEndpoints } from "../sophos/api/endpoints.js";
 import { catalogFrom, expand, expandPreset, type Catalog } from "../domain/categories.js";
@@ -60,7 +60,7 @@ import { compareToSnapshot, planWebsiteManagementRestore, type RestoreStep } fro
 import { buildSnapshot, canonicalJson, type Snapshot } from "../domain/snapshot.js";
 import { readInventory } from "./inventory-reader.js";
 import { auditedWrite, auditOrWarn } from "./audit-log.js";
-import { createChecked, isUnclearWrite, readBack, takenNameAdvice, type ReadBackMiss } from "./write-check.js";
+import { createChecked, foundNote, isUnclearWrite, readBack, sendChecked, takenNameAdvice, type ReadBackMiss, type UnclearWriteError } from "./write-check.js";
 import { loadSnapshot } from "./snapshot-store.js";
 import { runReadiness } from "./readiness.js";
 import { readText, saveFile } from "./safe-files.js";
@@ -104,6 +104,12 @@ export interface BuildStep {
    * dropped connection): what it said. Without it, Sophos accepted the delete.
    */
   deleteAnswer?: string;
+  /**
+   * Set on a delete-failed step when an Allow undo's delete of the pilot allows list got no success from Sophos and a
+   * read-back still found the list: what Sophos said and what was read, for the Detail line. A rollback clears it, and
+   * keeps its own in rollback.
+   */
+  deleteError?: string;
   error?: string;
   note?: string;
   /** For a profile: its site lists by plan key, filled with real ids at build time. */
@@ -129,7 +135,11 @@ export interface BuildRecord {
   pilot: PilotOptions & { name: string };
   steps: BuildStep[];
   checks: Check[];
-  rollback?: { at: string; steps: Array<{ kind: StepKind | "website-management"; name: string; id?: string; status: string; error?: string }> };
+  /**
+   * answer is set on a Website Management step Sophos didn't answer with a success (a 5xx, no answer in time or a
+   * dropped connection) that nothing could be read back after: what it said.
+   */
+  rollback?: { at: string; steps: Array<{ kind: StepKind | "website-management"; name: string; id?: string; status: string; error?: string; answer?: string }> };
 }
 
 const PATHS: Record<StepKind, string> = {
@@ -352,7 +362,7 @@ export async function dryRun(dataDir: string, ctx: TenantContext, pilotIn: Pilot
   };
 }
 
-/** A create that is sent once, read back by name when Sophos gives no clear answer, and audited with the id it made. */
+/** A create that is sent once, read back by name when Sophos gives no clear answer (then kept in unclear), and audited with the id it made. */
 export async function auditedCreate<T extends { id: string }>(
   tenantId: string,
   resource: string,
@@ -361,7 +371,7 @@ export async function auditedCreate<T extends { id: string }>(
   what: string,
   miss: ReadBackMiss,
   detail: Record<string, unknown>,
-): Promise<{ value: T; note?: string }> {
+): Promise<{ value: T; note?: string; unclear?: UnclearWriteError }> {
   try {
     const r = await createChecked(create, find, what, miss);
     await auditOrWarn({ tenantId, action: "create", resource, resourceId: r.value.id, ok: true, detail: { ...detail, ...(r.note ? { note: r.note } : {}) } });
@@ -593,6 +603,8 @@ export async function rollback(
     let unclear: { said: string; reason: string } | undefined;
     // Set when Sophos answered 404, so the object was already gone. Audited below, with what the read-back found, to match the step.
     let answered404: string | undefined;
+    // What an Allow undo found before is over: this rollback's outcome is in out.
+    delete s.deleteError;
     try {
       await deleter[s.kind](s.id!);
       await auditOrWarn({ ...entry, ok: true });
@@ -651,14 +663,49 @@ export async function rollback(
       out.push({ kind: s.kind, name: s.name, id: s.id, status: gone.unread ? "not confirmed" : "failed", error });
     }
   }
+  // Whether a Website Management step reads back as the snapshot has it: an entry re-created or patched back, or one deleted gone (404).
+  const restoredNow = async (step: RestoreStep): Promise<true | null> => {
+    if (step.op === "delete") {
+      try {
+        await getLocalSite(ro, t, step.id);
+        return null;
+      } catch (err) {
+        if (errorStatus(err) === 404) return true;
+        throw err;
+      }
+    }
+    const want = (snapshot?.objects.websiteManagement ?? []).filter((x) => x.url === step.url);
+    return want.length && planWebsiteManagementRestore(want, await listLocalSites(ro, t)).length === 0 ? true : null;
+  };
   for (const step of restorePlan) {
+    const name = `${step.op} ${step.url}`;
     try {
-      if (step.op === "create") await auditedWrite({ tenantId: t }, "restore-create", "local-site", undefined, () => createLocalSite(api, t, step.body), { url: step.url });
-      else if (step.op === "patch") await auditedWrite({ tenantId: t }, "restore-patch", "local-site", step.id, () => patchLocalSite(api, t, step.id, step.body), { url: step.url, was: step.was });
-      else await auditedWrite({ tenantId: t }, "restore-delete", "local-site", step.id, () => deleteLocalSite(api, t, step.id), { url: step.url });
-      out.push({ kind: "website-management", name: `${step.op} ${step.url}`, status: "done" });
+      // A 5xx or no answer can still have gone through, so it's read back, as a delete is; a refusal is thrown.
+      const { unclear } = await sendChecked<unknown>(() =>
+        step.op === "create"
+          ? auditedWrite({ tenantId: t }, "restore-create", "local-site", undefined, () => createLocalSite(api, t, step.body), { url: step.url })
+          : step.op === "patch"
+            ? auditedWrite({ tenantId: t }, "restore-patch", "local-site", step.id, () => patchLocalSite(api, t, step.id, step.body), { url: step.url, was: step.was })
+            : auditedWrite({ tenantId: t }, "restore-delete", "local-site", step.id, () => deleteLocalSite(api, t, step.id), { url: step.url }),
+      );
+      if (!unclear) {
+        out.push({ kind: "website-management", name, status: "done" });
+        continue;
+      }
+      const back = await readBack(() => restoredNow(step));
+      const said = unclear.reason.replace(/\.$/, "");
+      if (back.value) {
+        await auditOrWarn({ tenantId: t, action: `restore-${step.op}`, resource: "local-site", resourceId: step.op === "create" ? undefined : step.id, ok: true, detail: { url: step.url, note: foundNote(unclear, "it as the snapshot has it", "in Website Management") } });
+        out.push({ kind: "website-management", name, status: "done" });
+      } else if (!back.unread) {
+        // No clear answer, and a read-back found it not as the snapshot has it: not made, as a rollback counts a delete still found.
+        out.push({ kind: "website-management", name, status: "failed", error: `${said}. A read-back found it not as the snapshot has it, so it wasn't made.` });
+      } else {
+        // Nothing could be read: it may have gone through, so it's not confirmed, with what Sophos said.
+        out.push({ kind: "website-management", name, status: "not confirmed", answer: said, error: `${said}. A read-back couldn't read Website Management (${back.unread.replace(/\.$/, "")}), so the change isn't confirmed.` });
+      }
     } catch (err) {
-      out.push({ kind: "website-management", name: `${step.op} ${step.url}`, status: "failed", error: err instanceof Error ? err.message : String(err) });
+      out.push({ kind: "website-management", name, status: "failed", error: err instanceof Error ? err.message : String(err) });
     }
   }
   if (restoreRefused) out.push({ kind: "website-management", name: "Website Management from the snapshot", status: "failed", error: restoreRefused });

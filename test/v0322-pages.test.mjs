@@ -129,7 +129,8 @@ test("Promote: a wave move or undo Sophos didn't answer with a success isn't cal
   off();
   let answer = moved;
   const view = await promotionView(dataDir, ctx, null);
-  // The pilot switch (off in the view): a 5xx is refused, as the route refuses it.
+  // The pilot switch (off in the view): a 5xx that a read-back finds not made is refused, as the route refuses it (from v0.3.23 it's read back).
+  tenant.ignore("PATCH", POLICY);
   tenant.unclear("PATCH", POLICY);
   const switchError = await setPilotEnabled(dataDir, ctx, true).then(() => null, (err) => err.message);
   tenant.rules.length = 0;

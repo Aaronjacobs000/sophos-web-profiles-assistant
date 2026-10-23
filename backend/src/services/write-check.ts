@@ -108,19 +108,31 @@ function readsSaid(): string {
 }
 
 /**
+ * An unclear write no read-back could read at all: whether it went through isn't known. unread says why nothing was
+ * read, and answer what Sophos said to the write, so a caller can say both without calling it failed.
+ */
+export class UnreadAfterWriteError extends UnclearWriteError {
+  constructor(reason: string, method: string, status: number | undefined, advice: string, readonly unread: string, readonly answer: string) {
+    super(reason, method, status, advice);
+  }
+}
+
+/**
  * The error for an unclear write a read-back did not find, or could not
  * read (unread): still unclear. It says where the tool looked and what it
  * found, that a miss is not proof, and what to do next; or, when nothing
- * could be read, what to check by hand.
+ * could be read, what to check by hand (an UnreadAfterWriteError).
  */
 export function notFound(err: UnclearWriteError, miss: ReadBackMiss, unread?: string): UnclearWriteError {
   const reason = err.reason.replace(/\.$/, "");
   if (unread) {
-    return new UnclearWriteError(
+    return new UnreadAfterWriteError(
       `${reason}. A read-back could not read ${miss.where} (${unread.replace(/\.$/, "")})`,
       err.method,
       err.status,
       `The change may still have gone through: check ${miss.check ?? "the tenant"} before trying again.`,
+      unread,
+      reason,
     );
   }
   return new UnclearWriteError(
@@ -150,7 +162,8 @@ export async function sendChecked<T>(write: () => Promise<T>): Promise<{ value?:
 
 /**
  * Runs a create. When Sophos gives no clear answer, reads the tenant
- * back with find(): the object and a note when it is there, else an
+ * back with find(): the object and a note when it is there, with what Sophos
+ * said (unclear), since finding it says nothing of what's in it; else an
  * UnclearWriteError that says where the tool looked and what it found.
  */
 export async function createChecked<T>(
@@ -158,13 +171,13 @@ export async function createChecked<T>(
   find: () => Promise<T | null | undefined>,
   what: string,
   miss: ReadBackMiss,
-): Promise<{ value: T; note?: string }> {
+): Promise<{ value: T; note?: string; unclear?: UnclearWriteError }> {
   try {
     return { value: await create() };
   } catch (err) {
     if (!isUnclearWrite(err)) throw err;
     const found = await readBack(find);
-    if (found.value !== undefined) return { value: found.value, note: foundNote(err, what) };
+    if (found.value !== undefined) return { value: found.value, note: foundNote(err, what), unclear: err };
     throw notFound(err, miss, found.unread);
   }
 }

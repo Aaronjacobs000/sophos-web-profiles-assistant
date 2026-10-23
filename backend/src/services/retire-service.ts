@@ -19,7 +19,8 @@
  * Restore runs the other way round: entries first (deleted ones re-created
  * from the record, patched ones put back), then the policies' tags.settings,
  * so no policy names a tag before its entries exist. A re-created entry gets
- * a new id; the snapshot comparison matches Website Management by URL.
+ * a new id; the snapshot comparison matches Website Management by URL. Each
+ * restore write is read back the same way as the retire's, a 5xx included.
  *
  * The tool warns, and asks for a confirmation, while devices still depend on
  * the tags: devices that can't use profiles keep classic settings, and an
@@ -42,7 +43,7 @@ import { auditedWrite, auditOrWarn } from "./audit-log.js";
 import { auditedCreate } from "./build-service.js";
 import { listSnapshots, loadSnapshot } from "./snapshot-store.js";
 import { runReadiness } from "./readiness.js";
-import { foundNote, readBack, sendChecked, type UnclearWriteError } from "./write-check.js";
+import { UnreadAfterWriteError, foundNote, readBack, sendChecked, type UnclearWriteError } from "./write-check.js";
 import { readText, saveFile } from "./safe-files.js";
 
 const SECTION = "retire";
@@ -72,7 +73,8 @@ export type DoneStep = RetireStep & {
   readBack?: string;
   /**
    * Set with readBack when Sophos didn't answer the step's write with a success (a 5xx, no answer in time or a dropped
-   * connection) and nothing could be read back: what it said. Without it, Sophos accepted the write.
+   * connection) and nothing could be read back, or a restore's re-created entry found after it didn't read back as it
+   * was: what it said. Without it, Sophos accepted the write.
    */
   answer?: string;
   error?: string;
@@ -364,6 +366,8 @@ export async function restoreRetire(dataDir: string, ctx: TenantContext, id: str
     delete step.answer;
     delete step.error;
     try {
+      // A 5xx or no answer can still have gone through, so it's read back like a 2xx, as in the retire; a refusal is thrown.
+      let unclear: UnclearWriteError | undefined;
       if (step.op === "delete-entry") {
         const e = step.entry;
         if (!e) throw new Error("The record has no copy of this entry.");
@@ -373,7 +377,7 @@ export async function restoreRetire(dataDir: string, ctx: TenantContext, id: str
           step.readBack = "already there";
         } else {
           const body = { url: e.url, ...(e.tags?.length ? { tags: e.tags } : {}), ...(e.categoryId !== undefined ? { categoryId: e.categoryId } : {}), ...(e.comment ? { comment: e.comment } : {}) };
-          const { value } = await auditedCreate(
+          const made = await auditedCreate(
             t,
             "local-site",
             () => createLocalSite(api, t, body),
@@ -381,18 +385,28 @@ export async function restoreRetire(dataDir: string, ctx: TenantContext, id: str
             "the Website Management entry",
             { where: "Website Management", found: `no entry for ${e.url}` },
             { restoreOf: record.id, url: e.url, tags: e.tags },
-          );
-          step.newId = value.id;
-          // Made: a read that fails leaves it unconfirmed, not failed.
-          const back = await readBack(() => getLocalSite(ro, t, value.id));
-          step.readBack = back.value
-            ? sameList(back.value.tags, e.tags ?? []) && (back.value.categoryId ?? null) === (e.categoryId ?? null)
-              ? "re-created, matches"
-              : "re-created, differs"
-            : `not read: ${back.unread ?? "no read-back"}`;
+          ).catch((err: unknown) => {
+            // No clear answer, and Website Management couldn't be read to look for it: not known either way, so not confirmed rather than failed.
+            if (!(err instanceof UnreadAfterWriteError)) throw err;
+            step.readBack = `not read: ${err.unread}`;
+            step.answer = err.answer;
+            return null;
+          });
+          if (made) {
+            // Found by URL after a 5xx says it was made, not what's in it, so what Sophos said is kept unless it reads back as it was.
+            unclear = made.unclear;
+            step.newId = made.value.id;
+            // Made: a read that fails leaves it unconfirmed, not failed.
+            const back = await readBack(() => getLocalSite(ro, t, made.value.id));
+            step.readBack = back.value
+              ? sameList(back.value.tags, e.tags ?? []) && (back.value.categoryId ?? null) === (e.categoryId ?? null)
+                ? "re-created, matches"
+                : "re-created, differs"
+              : `not read: ${back.unread ?? "no read-back"}`;
+          }
         }
       } else if (step.op === "patch-entry") {
-        await auditedWrite({ tenantId: t }, "restore-patch", "local-site", step.id, () => patchLocalSite(api, t, step.id, { tags: step.before }), { restoreOf: record.id, url: step.url });
+        ({ unclear } = await sendChecked(() => auditedWrite({ tenantId: t }, "restore-patch", "local-site", step.id, () => patchLocalSite(api, t, step.id, { tags: step.before }), { restoreOf: record.id, url: step.url })));
         const back = await readBack(async () => {
           const s = await getLocalSite(ro, t, step.id);
           return sameList(s.tags, step.before) ? s : null;
@@ -400,15 +414,28 @@ export async function restoreRetire(dataDir: string, ctx: TenantContext, id: str
         step.readBack = back.value ? "tags match" : back.unread ? `not read: ${back.unread}` : "tags differ";
       } else {
         const body = { settings: { [TAGS_KEY]: { value: step.before } } };
-        await auditedWrite({ tenantId: t }, "restore-tags", "policy", step.policyId, () => patchPolicy(api, t, step.policyId, body), { restoreOf: record.id });
+        ({ unclear } = await sendChecked(() => auditedWrite({ tenantId: t }, "restore-tags", "policy", step.policyId, () => patchPolicy(api, t, step.policyId, body), { restoreOf: record.id })));
         const back = await readBack(async () => {
           const p = await getPolicy(ro, t, step.policyId);
           return sameTags(settingValue<TagSetting>(p, TAGS_KEY), step.before) ? p : null;
         });
         step.readBack = back.value ? "tags match" : back.unread ? `not read: ${back.unread}` : "tags differ";
       }
-      step.status = /match|already there/.test(step.readBack ?? "") && !/differs|^not read/.test(step.readBack ?? "") ? "restored" : "restore-failed";
-      if (step.status === "restore-failed") step.error = unconfirmed(step.readBack, "restore");
+      const notRead = !!step.readBack?.startsWith("not read");
+      step.status = /match|already there/.test(step.readBack ?? "") && !/differs/.test(step.readBack ?? "") && !notRead ? "restored" : "restore-failed";
+      if (step.status === "restored") {
+        // A re-create's own audit entry says how it was found.
+        if (unclear && step.op !== "delete-entry") await auditOrWarn({ tenantId: t, action: step.op === "patch-entry" ? "restore-patch" : "restore-tags", resource: step.op === "patch-entry" ? "local-site" : "policy", resourceId: step.op === "patch-entry" ? step.id : step.policyId, ok: true, detail: { restoreOf: record.id, note: foundNote(unclear, "the change", "in the tenant") } });
+      } else if (unclear && !notRead && step.op !== "delete-entry") {
+        // No clear answer, and a read-back found it unchanged: not made, as in the retire.
+        const found = step.readBack;
+        delete step.readBack;
+        throw new Error(`${unclear.reason.replace(/\.$/, "")}. A read-back found it unchanged (${found}), so it wasn't restored.`);
+      } else {
+        step.error = unconfirmed(step.readBack, "restore");
+        // How Sophos answered when it wasn't a success: the page then doesn't say Sophos accepted the restore.
+        if (unclear) step.answer = unclear.reason.replace(/\.$/, "");
+      }
     } catch (err) {
       step.status = "restore-failed";
       step.error = err instanceof Error ? err.message : String(err);

@@ -13,6 +13,10 @@
 // From v0.3.22 a write Sophos didn't answer with a success (a 5xx, or no
 // answer), that nothing could be read back after, is answered too
 // (unanswered): drawn as unconfirmed, and never saying Sophos accepted it.
+// From v0.3.23 it never says the write didn't go through either, and it
+// covers the pilot switch, a restore step, a rollback's Website Management
+// change, an Allow's link, and a list or entry a create made that was found
+// by name but not read back.
 // A new action or row that reports a write's outcome belongs in this table.
 
 import { test } from "node:test";
@@ -186,6 +190,7 @@ const ACTIONS = [
       rollbackWrite(rolled("rollback-partial", [out("policy", "deleted, 404 on read-back"), out("profile", "failed", { error: RAW })])),
       rollbackWrite(rolled("rollback-partial", [out("policy", "deleted, 404 on read-back"), { kind: "website-management", name: "Website Management read back", status: "not confirmed", error: "Website Management didn't read back as the snapshot has it." }])),
     ],
+    unanswered: [rollbackWrite(rolled("rollback-partial", [out("policy", "deleted, 404 on read-back"), { kind: "website-management", name: "create blocked.example.com", status: "not confirmed", answer: UNCLEAR, error: `${UNCLEAR}. A read-back couldn't read Website Management (${RAW}), so the change isn't confirmed.` }]))],
     failed: [rollbackWrite(rolled("rollback-partial", [out("policy", "failed", { error: RAW }), out("profile", "failed", { error: RAW })], built.steps.map((x) => ({ ...x, status: "delete-failed" })))), rollbackWrite(FAIL)],
   },
   createLists(T),
@@ -222,7 +227,11 @@ const ACTIONS = [
     steps: [click("[data-allow]"), until(`!!document.querySelector("#allow-go")`), click("#allow-go")],
     confirmed: allowWrite(allowEntry({ readBack: "site listed" })),
     unconfirmed: [allowWrite(allowEntry({ readBack: NOT_READ })), allowWrite(allowEntry({ readBack: "not found" })), allowWrite(allowEntry({ readBack: "list holds the site; profile read back without the link" })), allowWrite(allowEntry({ readBack: `${NOT_READ}; profile links it as allow` }))],
-    unanswered: [allowWrite(allowEntry({ readBack: NOT_READ, answer: UNCLEAR }))],
+    unanswered: [
+      allowWrite(allowEntry({ readBack: NOT_READ, answer: UNCLEAR })),
+      allowWrite(allowEntry({ status: "partial", readBack: `list holds the site; profile not read: ${RAW}`, answer: UNCLEAR, error: RAW })),
+      allowWrite(allowEntry({ readBack: `${NOT_READ}; profile links it as allow`, answer: UNCLEAR })),
+    ],
     failed: [allowWrite(FAIL)],
   },
   {
@@ -259,6 +268,7 @@ const ACTIONS = [
     steps: [click("#toggle")],
     confirmed: { [`POST /api/promote/${T}/enabled`]: { enabled: true, readBack: "matches" } },
     unconfirmed: [{ [`POST /api/promote/${T}/enabled`]: { enabled: true, readBack: "differs" } }, { [`POST /api/promote/${T}/enabled`]: { enabled: true, readBack: NOT_READ } }],
+    unanswered: [{ [`POST /api/promote/${T}/enabled`]: { enabled: true, readBack: NOT_READ, answer: UNCLEAR } }],
     failed: [{ [`POST /api/promote/${T}/enabled`]: FAIL }],
   },
   {
@@ -302,6 +312,7 @@ const ACTIONS = [
     steps: [click("[data-restore]")],
     confirmed: restoreWrite(retireRec(1, "restored", [tagStep("restored", { readBack: "tags match" }), delStep("restored", { readBack: "re-created, matches" })])),
     unconfirmed: [restoreWrite(retireRec(1, "restore-partial", [tagStep("restore-failed", { readBack: NOT_READ, error: "The tool couldn't read it back, so the restore isn't confirmed." }), delStep("restored", { readBack: "re-created, matches" })])), restoreWrite(retireRec(1, "restore-partial", [tagStep("restored", { readBack: "tags match" }), delStep("restore-failed", { error: RAW })]))],
+    unanswered: [restoreWrite(retireRec(1, "restore-partial", [tagStep("restore-failed", { readBack: NOT_READ, answer: UNCLEAR, error: "The tool couldn't read it back, so the restore isn't confirmed." }), delStep("restored", { readBack: "re-created, matches" })]))],
     failed: [restoreWrite(retireRec(1, "restore-partial", [tagStep("restore-failed", { error: RAW }), delStep("restore-failed", { error: RAW })])), restoreWrite(FAIL)],
   },
   {
@@ -352,6 +363,7 @@ function judge(where, state, got, confirmedText) {
   const want = { confirmed: "ok", unconfirmed: "warn", unanswered: "warn", failed: "err" }[state];
   if (got.kind !== want) out.push(`${where}: ${state} drawn as ${got.kind || "no color"}, not ${want}: "${got.text}"`);
   if (state === "unanswered" && /\baccepted\b/i.test(got.text)) out.push(`${where}: says Sophos accepted a write it didn't answer with a success: "${got.text}"`);
+  if (state === "unanswered" && /didn't go through/i.test(got.text)) out.push(`${where}: says a write nothing could be read back for didn't go through: "${got.text}"`);
   if (state !== "confirmed") {
     if (!got.detail.replace(/^Detail:\s*/, "").trim()) out.push(`${where}: ${state} without a reason on the Detail line: "${got.text}"`);
     if (confirmedText) {
@@ -429,9 +441,10 @@ const ROWS = [
       step(7, "profile", { status: "delete-failed", deleteReadBack: NOT_READ }),
       step(8, "policy", { status: "delete-failed" }),
       step(9, "policy", { status: "planned", readBack: undefined, id: undefined }),
+      step(10, "site-list", { status: "delete-failed", deleteError: `${UNCLEAR}. A read-back still found the list, so it wasn't deleted.` }),
     ], { rollback: { at: now, steps: [out("profile", "not confirmed", { id: "profile-7", error: `A read-back couldn't read it (${RAW}), so it may still be there.` }), out("policy", "failed", { id: "policy-8", error: RAW })] } })] } },
     rows: ".steps-list > li",
-    states: ["confirmed", "unconfirmed", "unconfirmed", "unconfirmed", "failed", "done", "unconfirmed", "failed", "done"],
+    states: ["confirmed", "unconfirmed", "unconfirmed", "unconfirmed", "failed", "done", "unconfirmed", "failed", "done", "failed"],
   },
   {
     name: "Promote: Waves moved",
@@ -468,10 +481,12 @@ const ROWS = [
       allow(10, "added", { readBack: NOT_READ, buildStatus: "rolled-back" }),
       allow(11, "added", { readBack: NOT_READ, answer: UNCLEAR }),
       allow(12, "undo-failed", { readBack: "site listed", undoReadBack: NOT_READ, undoAnswer: UNCLEAR, error: "The list couldn't be read back, so the removal isn't confirmed." }),
+      allow(13, "partial", { readBack: `list holds the site; profile not read: ${RAW}`, answer: UNCLEAR, error: RAW }),
+      allow(14, "added", { readBack: `${NOT_READ}; profile links it as allow`, answer: UNCLEAR }),
     ] } },
     rows: ".order-list > li",
     scope: "Allow entries",
-    states: ["confirmed", "confirmed", "unconfirmed", "unconfirmed", "unconfirmed", "failed", "done", "unconfirmed", "failed", "done", "unanswered", "unanswered"],
+    states: ["confirmed", "confirmed", "unconfirmed", "unconfirmed", "unconfirmed", "failed", "done", "unconfirmed", "failed", "done", "unanswered", "unanswered", "unanswered", "unanswered"],
   },
   {
     name: "Promote: Retired",
@@ -485,9 +500,10 @@ const ROWS = [
       retireRec(6, "restore-partial", [tagStep("restore-failed", { readBack: "tags differ", error: "Read back: tags differ." }), delStep("restored", { readBack: "re-created, matches" })]),
       retireRec(7, "restore-partial", [tagStep("restore-failed", { error: RAW }), delStep("restore-failed", { error: RAW })]),
       retireRec(8, "partial", [tagStep("unconfirmed", { readBack: NOT_READ, answer: UNCLEAR, error: "The tool couldn't read it back, so the change isn't confirmed." }), delStep("done", { readBack: "404 on read-back" })]),
+      retireRec(9, "restore-partial", [tagStep("restore-failed", { readBack: NOT_READ, answer: UNCLEAR, error: "The tool couldn't read it back, so the restore isn't confirmed." }), delStep("restored", { readBack: "re-created, matches" })]),
     ] } },
     rows: ".retired-table tbody tr",
-    states: ["confirmed", "failed", "unconfirmed", "unconfirmed", "done", "unconfirmed", "failed", "unanswered"],
+    states: ["confirmed", "failed", "unconfirmed", "unconfirmed", "done", "unconfirmed", "failed", "unanswered", "unanswered"],
   },
 ];
 
@@ -521,6 +537,7 @@ test("no row that reports a write's outcome claims more than its read-back confi
         const want = { confirmed: "tag-ok", unconfirmed: "tag-warn", unanswered: "tag-warn", failed: "tag-bad", done: "tag-muted" }[state];
         if (r.cls !== want) wrong.push(`${where}: tag "${r.tag}" is ${r.cls || "no color"}, not ${want}`);
         if (state === "unanswered" && /\baccepted\b/i.test(r.text)) wrong.push(`${where}: says Sophos accepted a write it didn't answer with a success`);
+        if (state === "unanswered" && /didn't go through/i.test(r.text)) wrong.push(`${where}: says a write nothing could be read back for didn't go through`);
         if (state === "unconfirmed" || state === "unanswered" || state === "failed") {
           if (confirmedTags.has(r.tag)) wrong.push(`${where}: uses the confirmed label "${r.tag}"`);
           if (!r.detail) wrong.push(`${where}: no reason on the Detail line`);

@@ -50,9 +50,10 @@ function stepState(s, rec) {
         const back = readBackParts(s.deleteReadBack);
         return { tag: tag(OUTCOME_TAG.unconfirmed, "Delete not confirmed"), note: "Sophos didn't say the delete went through, and the read-back didn't confirm it's gone. Roll back again, or check it in Sophos Fusion.", detail: `${sentence(s.deleteAnswer)} Read back: ${sentence(back.detail || back.plain)}` };
       }
-      return s.deleteReadBack
-        ? { tag: tag(OUTCOME_TAG.unconfirmed, "Delete not confirmed"), note: "Sophos accepted the delete, but the read-back didn't confirm it's gone. Roll back again, or check it in Sophos Fusion.", detail: unconfirmedReason(s.deleteReadBack) }
-        : { tag: tag(OUTCOME_TAG.failed, "Delete failed"), note: rolled?.error ? "The delete failed. Roll back again, or check it in Sophos Fusion." : "", detail: rolled?.error };
+      if (s.deleteReadBack) return { tag: tag(OUTCOME_TAG.unconfirmed, "Delete not confirmed"), note: "Sophos accepted the delete, but the read-back didn't confirm it's gone. Roll back again, or check it in Sophos Fusion.", detail: unconfirmedReason(s.deleteReadBack) };
+      // An Allow undo's delete of the pilot allows list that a read-back still found keeps why on the step; a rollback's is in the rollback.
+      if (s.deleteError) return { tag: tag(OUTCOME_TAG.failed, "Delete failed"), note: "The delete failed. Undo the Allow again on the Pilot page, or check it in Sophos Fusion.", detail: s.deleteError };
+      return { tag: tag(OUTCOME_TAG.failed, "Delete failed"), note: rolled?.error ? "The delete failed. Roll back again, or check it in Sophos Fusion." : "", detail: rolled?.error };
     default:
       return { tag: "" };
   }
@@ -94,9 +95,11 @@ function rollbackOutcome(rec) {
   const opens = steps.filter((o) => o.status === "not confirmed" || o.status === "still there after delete");
   const open = opens[0];
   const why = (o) => `${o.name}: ${sentence(o.error ?? "It was still there after the delete.")}`;
-  // A delete Sophos answered with a 5xx or a 404, or not at all, wasn't accepted (its step keeps what Sophos said).
-  const unanswered = opens.filter((o) => o.id && rec.steps.some((s) => s.id === o.id && s.deleteAnswer)).length;
-  if (!failed && open && unanswered) return { state: "unconfirmed", text: `The rollback isn't confirmed: Sophos didn't say ${unanswered === 1 ? "a delete" : `${unanswered} deletes`} went through, and the read-back didn't confirm ${unanswered === 1 ? "it" : "them"}.`, reason: why(open) };
+  // A delete Sophos answered with a 5xx or a 404, or not at all, wasn't accepted (its step keeps what Sophos said), nor was a Website Management change it gave no success to (answer).
+  const unansweredOpens = opens.filter((o) => o.answer || (o.id && rec.steps.some((s) => s.id === o.id && s.deleteAnswer)));
+  const unanswered = unansweredOpens.length;
+  const what = unansweredOpens.every((o) => o.kind !== "website-management") ? "delete" : "change";
+  if (!failed && open && unanswered) return { state: "unconfirmed", text: `The rollback isn't confirmed: Sophos didn't say ${unanswered === 1 ? `a ${what}` : `${unanswered} ${what}s`} went through, and the read-back didn't confirm ${unanswered === 1 ? "it" : "them"}.`, reason: why(open) };
   if (!failed && open) return { state: "unconfirmed", text: "Sophos accepted the rollback, but the read-back didn't confirm all of it.", reason: why(open) };
   return { state: steps.some((o) => o.status !== "failed") ? "unconfirmed" : "failed", text: `${buildHeadline(rec)}.`, reason: failed ? why(failed) : open ? why(open) : "" };
 }
