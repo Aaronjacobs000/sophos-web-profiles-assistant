@@ -274,7 +274,8 @@ test("Build: an Allow undo whose list delete isn't confirmed shows as not confir
       await b.open(`${base}/build.html?tenant=${T}`, 1440, ".steps-list");
       return (await b.evaluate(ROWS("Plan", ".steps-list > li"))).pop();
     };
-    assert.deepEqual(await lastStep(), [["Delete not confirmed", "tag-warn"], "Sophos didn't say the delete went through, and the read-back didn't confirm it's gone. Roll back again, or check it in Sophos Fusion.", SAID]);
+    // No rollback has run, so the note says to undo the Allow again, not to roll back again (v0.3.24).
+    assert.deepEqual(await lastStep(), [["Delete not confirmed", "tag-warn"], "Sophos didn't say the delete went through, and the read-back didn't confirm it's gone. Undo the Allow again on the Pilot page, or check it in Sophos Fusion.", SAID]);
     // Accepted, and not read back.
     tenant.lists.set(entry.listId, { id: entry.listId, name: entry.listName, sites: [{ id: "s1", site: "chat.example.org" }] });
     [...tenant.profiles.values()][0].siteListActions.push({ id: entry.listId, action: "allow", priority: 2 });
@@ -282,7 +283,7 @@ test("Build: an Allow undo whose list delete isn't confirmed shows as not confir
     await undoAllow(dataDir, ctx, entry.id);
     off2();
     rec = await getBuild(dataDir, T, entry.buildId);
-    assert.deepEqual(await lastStep(), [["Delete not confirmed", "tag-warn"], "Sophos accepted the delete, but the read-back didn't confirm it's gone. Roll back again, or check it in Sophos Fusion.", `Detail: ${UNAVAILABLE}.`]);
+    assert.deepEqual(await lastStep(), [["Delete not confirmed", "tag-warn"], "Sophos accepted the delete, but the read-back didn't confirm it's gone. Undo the Allow again on the Pilot page, or check it in Sophos Fusion.", `Detail: ${UNAVAILABLE}.`]);
   } finally {
     srv.close();
     await b?.close();

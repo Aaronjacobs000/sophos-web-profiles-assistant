@@ -172,13 +172,3 @@ export async function auditedWrite<T>(
   await auditOrWarn({ ...entry, resourceId: resourceId ?? (typeof returnedId === "string" ? returnedId : undefined), ok: true });
   return result;
 }
-
-/** Runs one delete from a page's row menu and audits it (see auditedWrite). */
-export async function auditedDelete(
-  ctx: { tenantId: string },
-  resource: string,
-  resourceId: string,
-  run: () => Promise<unknown>,
-): Promise<void> {
-  await auditedWrite(ctx, "delete", resource, resourceId, run);
-}

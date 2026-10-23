@@ -12,7 +12,9 @@
  * list and deletes it. The list is added to the build record, so rolling the
  * build back deletes it too. A list Sophos made whose link to the profile
  * didn't go through is kept as partial and can be undone (category D), and
- * an undo that wasn't confirmed can be sent again.
+ * an undo that wasn't confirmed can be sent again. A new list Sophos gave no
+ * clear answer to, with the site lists unread after, is kept as unconfirmed:
+ * the next Allow looks for it by name, and uses it if it's there.
  */
 
 import { promises as fs } from "node:fs";
@@ -40,8 +42,8 @@ import { listAllEndpoints } from "../sophos/api/endpoints.js";
 import { SITE_LIST_LIMIT } from "../domain/design.js";
 import { fitName } from "../domain/cleanup.js";
 import { auditedWrite, auditOrWarn } from "./audit-log.js";
-import { auditedCreate, getBuild, listBuilds, saveRecord, type BuildRecord, type BuildStep } from "./build-service.js";
-import { foundNote, notFound, readBack, sendChecked, takenNameAdvice } from "./write-check.js";
+import { auditedCreate, getBuild, idsCreatedByTool, listBuilds, saveRecord, type BuildRecord, type BuildStep } from "./build-service.js";
+import { UnreadAfterWriteError, foundNote, notFound, readBack, sendChecked, takenNameAdvice } from "./write-check.js";
 import { readText, saveFile } from "./safe-files.js";
 
 const SECTION = "pilot";
@@ -141,8 +143,13 @@ export interface AllowEntry {
   /**
    * partial: Sophos made the pilot allows list, but its link to the profile didn't go through, or Sophos didn't answer it
    * with a success and no read of the profile worked (answer, and "profile not read: " in readBack), so it can be undone.
+   * unconfirmed: Sophos didn't answer the new list's create with a success, and the tenant's site lists couldn't be read
+   * to look for it by name after (answer, and "not read: " in readBack), so it may have been made. There's no list id to
+   * undo; the next Allow looks for the list by name first, and an Allow of the same site carries on this entry.
    */
-  status: "added" | "partial" | "failed" | "undone" | "undo-failed";
+  status: "added" | "partial" | "unconfirmed" | "failed" | "undone" | "undo-failed";
+  /** Set when the Allow used a list it found by name, which an earlier Allow asked for (unconfirmed): says so. */
+  note?: string;
   /**
    * What the read-back found: the site ("site listed", "not found"), or a new list ("list holds the site", "list read back
    * without the site"), with "not read: " and why when no read worked. A new list adds what the profile read back after
@@ -212,6 +219,8 @@ export function profilePutBody(p: WebProfile): Record<string, unknown> {
 export type AllowStep =
   | { op: "add-site"; listId: string; listName: string; site: string }
   | { op: "create-list"; name: string; site: string }
+  /** The list an unconfirmed Allow (allowId, for site) asked for, found by name: that entry takes it, as if it had made it. */
+  | { op: "use-list"; listId: string; name: string; site: string; allowId: string }
   | { op: "link-list"; profileId: string; profileName: string; priority: number };
 
 export interface AllowPlan {
@@ -282,16 +291,26 @@ export async function planAllow(dataDir: string, ctx: TenantContext, host: strin
     if (higher.length) plan.notes.push(`${higher.length} block or warn lists have a higher priority than the pilot allows list; a site in one of them stays ${higher[0]!.action}ed.`);
   } else {
     const lists = await listSiteLists(ro, t);
-    if (lists.length >= SITE_LIST_LIMIT) plan.problems.push(`The account has ${lists.length} of ${SITE_LIST_LIMIT} site lists, so a pilot allows list won't fit.`);
-    if (actions.length >= LISTS_PER_PROFILE) plan.problems.push(`The profile already has ${LISTS_PER_PROFILE} site lists.`);
     const name = pilotListName(pilot);
     const taken = lists.find((l) => l.name.toLowerCase() === name.toLowerCase());
     // A list an earlier Allow made whose link didn't go through is this pilot's: undoing that Allow deletes it.
     const partial = taken && record.allows.find((x) => x.status === "partial" && x.listId === taken.id);
+    // An earlier Allow whose create of the list Sophos didn't confirm (unconfirmed) may have made it: a list by that name
+    // that no record has an id for is that one, and this Allow uses it. The entry for this site goes first.
+    const asked = record.allows.filter((x) => x.status === "unconfirmed" && !x.listId && x.buildId === pilot.buildId && x.listName.toLowerCase() === name.toLowerCase());
+    const recorded = taken && !partial && asked.length ? new Set([...(await idsCreatedByTool(dataDir, t)), ...record.allows.map((x) => x.listId)]) : new Set<string | undefined>();
+    const by = taken && !partial && !recorded.has(taken.id) ? asked.find((x) => x.site === site) ?? asked[0] : undefined;
+    // A list found by name for an earlier Allow is already in the account.
+    if (lists.length >= SITE_LIST_LIMIT && !by) plan.problems.push(`The account has ${lists.length} of ${SITE_LIST_LIMIT} site lists, so a pilot allows list won't fit.`);
+    if (actions.length >= LISTS_PER_PROFILE) plan.problems.push(`The profile already has ${LISTS_PER_PROFILE} site lists.`);
     if (partial) plan.problems.push(`The site list "${name}" from the Allow for ${partial.site} is in the tenant, but its link to the profile ${linkUnknown(partial) ? "isn't confirmed" : "didn't go through"}. Undo that Allow first, then allow this site again.`);
-    else if (taken) plan.problems.push(`A site list named "${name}" already exists but isn't this pilot's; rename it first.`);
+    else if (taken && !by) plan.problems.push(`A site list named "${name}" already exists but isn't this pilot's; rename it first.`);
     const priority = Math.max(0, ...actions.map((a) => a.priority)) + 1;
-    plan.steps.push({ op: "create-list", name, site }, { op: "link-list", profileId: pilot.profileId, profileName: pilot.profileName, priority });
+    if (taken && by) {
+      plan.steps.push({ op: "use-list", listId: taken.id, name: taken.name, site: by.site, allowId: by.id }, { op: "link-list", profileId: pilot.profileId, profileName: pilot.profileName, priority });
+      if (by.site !== site) plan.steps.push({ op: "add-site", listId: taken.id, listName: taken.name, site });
+      plan.notes.push(`The site list "${taken.name}" from the Allow for ${by.site} is in the tenant. Sophos didn't confirm it was made, so this Allow uses it rather than making another.`);
+    } else plan.steps.push({ op: "create-list", name, site }, { op: "link-list", profileId: pilot.profileId, profileName: pilot.profileName, priority });
     plan.notes.push(`The list gets priority ${priority}, above the profile's other lists, so the Allow wins over them.`);
   }
   return plan;
@@ -306,8 +325,11 @@ export async function addAllow(dataDir: string, ctx: TenantContext, host: string
   const t = ctx.tenantId;
   const site = plan.site;
   const record = await loadPilotRecord(dataDir, t);
+  // The same site again after an Allow that wasn't confirmed (unconfirmed) carries on that entry, so the site has one.
+  const again = record.allows.find((a) => a.status === "unconfirmed" && a.site === site && a.buildId === plan.pilot.buildId);
+  if (again) record.allows.splice(record.allows.indexOf(again), 1);
   const entry: AllowEntry = {
-    id: randomUUID(),
+    id: again?.id ?? randomUUID(),
     at: new Date().toISOString(),
     host,
     site,
@@ -318,9 +340,29 @@ export async function addAllow(dataDir: string, ctx: TenantContext, host: string
     status: "failed",
   };
   record.allows.unshift(entry);
+  // The entry that holds a new list: this one, or an earlier unconfirmed Allow whose list was found by name (use-list).
+  let holder = entry;
+  // What the profile read back after the link, which an Allow that adds its site to another entry's list carries too.
+  let linked: string | undefined;
   try {
     for (const step of plan.steps) {
-      if (step.op === "add-site") {
+      if (step.op === "use-list") {
+        holder = record.allows.find((a) => a.id === step.allowId) ?? entry;
+        holder.listId = step.listId;
+        holder.listName = step.name;
+        holder.createdList = true;
+        entry.note = `The site list "${step.name}" was found by name and used, not made again.`;
+        await auditOrWarn({ tenantId: t, action: "reuse", resource: "site-list", resourceId: step.listId, ok: true, detail: { name: step.name, pilotBuild: plan.pilot.buildId, allow: holder.id, note: "Found by name after an Allow's create Sophos didn't confirm; used, not made again" } });
+        const back = await readBack(async () => {
+          const l = await getSiteList(ro, t, step.listId);
+          return l.sites ?? (await listSites(ro, t, step.listId)).map((x) => x.site);
+        });
+        holder.readBack = back.value ? (back.value.map((x) => x.toLowerCase()).includes(holder.site) ? "list holds the site" : "list read back without the site") : `not read: ${back.unread ?? "no read-back"}`;
+        // Found by name says it was made, not what's in it: what Sophos said to the create stays unless it read back holding the site.
+        if (holder.readBack === "list holds the site") delete holder.answer;
+        // The build owns the list from here, as one the Allow made, so rolling the build back deletes it.
+        await ownedByBuild(dataDir, t, plan.pilot.buildId, step.listId, step.name);
+      } else if (step.op === "add-site") {
         entry.listId = step.listId;
         entry.listName = step.listName;
         // A 5xx or no answer can still have gone through, so it's read back like a 2xx; a refusal is thrown.
@@ -331,11 +373,13 @@ export async function addAllow(dataDir: string, ctx: TenantContext, host: string
         if (unclear && back.value) await auditOrWarn({ tenantId: t, action: "add-site", resource: "site-list", resourceId: step.listId, ok: true, detail: { site, note: foundNote(unclear, site, "in the list") } });
         entry.siteId = back.value?.id ?? res?.id;
         entry.readBack = back.value ? "site listed" : back.unread ? `not read: ${back.unread}` : "not found";
+        // Added to a list this Allow linked for an earlier entry: the link is part of this Allow too.
+        if (linked) entry.readBack = `${entry.readBack}; ${linked}`;
         // How Sophos answered when it wasn't a success: the page then doesn't say Sophos accepted the Allow.
         if (unclear && back.unread) entry.answer = unclear.reason.replace(/\.$/, "");
       } else if (step.op === "create-list") {
         const body = { name: step.name, description: "Narrow Allow entries added from the pilot digest (Web Profiles Assistant, unofficial).", sites: [site] };
-        const { value, unclear } = await auditedCreate(
+        const made = await auditedCreate(
           t,
           "site-list",
           () => createSiteList(api, t, body),
@@ -343,7 +387,18 @@ export async function addAllow(dataDir: string, ctx: TenantContext, host: string
           "the pilot allows list",
           { where: "the tenant's site lists", found: `no site list named "${body.name}"`, advice: takenNameAdvice(`the site list "${body.name}"`, "an undo", "allow the site again") },
           { name: body.name, sites: 1, pilotBuild: plan.pilot.buildId },
-        );
+        ).catch((err: unknown) => {
+          if (!(err instanceof UnreadAfterWriteError)) throw err;
+          // No clear answer, and the site lists couldn't be read to look for it by name: it may have been made. There's no
+          // id, so nothing here can undo it; the next Allow looks for it by name first, and uses it if it's there.
+          entry.listName = step.name;
+          entry.status = "unconfirmed";
+          entry.answer = err.answer;
+          entry.readBack = `not read: ${err.unread}`;
+          return null;
+        });
+        if (!made) break;
+        const { value, unclear } = made;
         entry.listId = value.id;
         entry.listName = step.name;
         entry.createdList = true;
@@ -356,52 +411,47 @@ export async function addAllow(dataDir: string, ctx: TenantContext, host: string
         // Found by name after a 5xx says it was made, not what's in it: unless it read back holding the site, the page doesn't say Sophos accepted the Allow.
         if (unclear && entry.readBack !== "list holds the site") entry.answer = unclear.reason.replace(/\.$/, "");
         // The build owns the list from here, so rolling the build back deletes it.
-        const build = await getBuild(dataDir, t, plan.pilot.buildId);
-        build.steps.push({
-          order: build.steps.length + 1,
-          kind: "site-list",
-          key: `pilot-allows-${value.id}`,
-          name: step.name,
-          method: "POST",
-          path: "/web-filters/v1/site-lists",
-          summary: "Narrow Allow entries from the pilot digest",
-          body: {},
-          status: "created",
-          id: value.id,
-          readBack: "matches",
-        });
-        await saveRecord(dataDir, build);
+        await ownedByBuild(dataDir, t, plan.pilot.buildId, value.id, step.name);
       } else {
+        // The link is the holder's: the entry whose list it is.
         const current = await getProfile(ro, t, step.profileId);
-        entry.profileBefore = { filterBySiteList: current.filterBySiteList, siteListActions: current.siteListActions ?? [] };
+        holder.profileBefore = { filterBySiteList: current.filterBySiteList, siteListActions: current.siteListActions ?? [] };
         const body = profilePutBody(current);
         body.filterBySiteList = true;
-        body.siteListActions = [...(current.siteListActions ?? []), { id: entry.listId!, action: "allow", priority: step.priority }];
+        body.siteListActions = [...(current.siteListActions ?? []), { id: holder.listId!, action: "allow", priority: step.priority }];
         // A 5xx or no answer can still have gone through, so it's read back like a 2xx; a refusal is thrown, and the list stays undoable.
-        const { unclear } = await sendChecked(() => auditedWrite({ tenantId: t }, "update", "profile", step.profileId, () => replaceProfile(api, t, step.profileId, body), { linkList: entry.listId, action: "allow", priority: step.priority }));
+        const { unclear } = await sendChecked(() => auditedWrite({ tenantId: t }, "update", "profile", step.profileId, () => replaceProfile(api, t, step.profileId, body), { linkList: holder.listId, action: "allow", priority: step.priority }));
         const back = await readBack(async () => {
           const p = await getProfile(ro, t, step.profileId);
-          return (p.siteListActions ?? []).some((a) => a.id === entry.listId && a.action === "allow" && a.priority === step.priority) ? p : null;
+          return (p.siteListActions ?? []).some((a) => a.id === holder.listId && a.action === "allow" && a.priority === step.priority) ? p : null;
         });
         // No clear answer, and the link didn't read back (or nothing could be read): not confirmed linked, so the entry is partial and its list can be undone.
         if (unclear && !back.value) {
           // Nothing read: the link may have gone through, so the entry keeps what Sophos said and why the profile wasn't read, and the page doesn't say it didn't.
           if (back.unread) {
-            entry.readBack = `${entry.readBack}; profile not read: ${back.unread}`;
-            entry.answer = unclear.reason.replace(/\.$/, "");
+            holder.readBack = `${holder.readBack}; profile not read: ${back.unread}`;
+            holder.answer = unclear.reason.replace(/\.$/, "");
           }
           throw notFound(unclear, { where: `the profile "${step.profileName}"`, found: "no link to the list in it", advice: "Undo it from Allow entries, then allow the site again.", check: `the profile "${step.profileName}" in Sophos Fusion` }, back.unread);
         }
-        if (unclear) await auditOrWarn({ tenantId: t, action: "update", resource: "profile", resourceId: step.profileId, ok: true, detail: { linkList: entry.listId, note: foundNote(unclear, "the link to the list", "in the profile") } });
+        if (unclear) await auditOrWarn({ tenantId: t, action: "update", resource: "profile", resourceId: step.profileId, ok: true, detail: { linkList: holder.listId, note: foundNote(unclear, "the link to the list", "in the profile") } });
         // A profile no read worked on says why it wasn't read, never that it read back without the link.
-        entry.readBack = `${entry.readBack}; ${back.value ? "profile links it as allow" : back.unread ? `profile not read: ${back.unread}` : "profile read back without the link"}`;
+        linked = back.value ? "profile links it as allow" : back.unread ? `profile not read: ${back.unread}` : "profile read back without the link";
+        holder.readBack = `${holder.readBack}; ${linked}`;
+        // An earlier entry whose list this Allow found and linked is added now, whatever happens to this Allow's own site.
+        if (holder !== entry) holder.status = "added";
       }
     }
-    entry.status = "added";
+    if (entry.status !== "unconfirmed") entry.status = "added";
   } catch (err) {
     entry.error = err instanceof Error ? err.message : String(err);
     // Sophos made the list, so it's in the tenant whatever went wrong after: the entry can be undone, which deletes it (category D).
     if (entry.createdList && entry.listId) entry.status = "partial";
+    // So does an earlier entry whose list this Allow found by name, when the link didn't finish.
+    if (holder !== entry && holder.status !== "added") {
+      holder.status = "partial";
+      holder.error = entry.error;
+    }
   }
   await savePilotRecord(dataDir, record);
   if (entry.status === "failed") throw new Error(`The Allow entry wasn't completed: ${entry.error}`);
@@ -418,6 +468,25 @@ const allowConfirmed = (readBack: string | undefined) => !!readBack && readBack.
  * it didn't answer with a success, as a rollback keeps them, so the Build page shows it as not confirmed, not failed.
  * One that failed keeps why (error), for the Build page's Detail line.
  */
+/** Adds the pilot allows list to the build record, so rolling the build back deletes it. */
+async function ownedByBuild(dataDir: string, tenantId: string, buildId: string, listId: string, name: string): Promise<void> {
+  const build = await getBuild(dataDir, tenantId, buildId);
+  build.steps.push({
+    order: build.steps.length + 1,
+    kind: "site-list",
+    key: `pilot-allows-${listId}`,
+    name,
+    method: "POST",
+    path: "/web-filters/v1/site-lists",
+    summary: "Narrow Allow entries from the pilot digest",
+    body: {},
+    status: "created",
+    id: listId,
+    readBack: "matches",
+  });
+  await saveRecord(dataDir, build);
+}
+
 async function markListDeleted(dataDir: string, tenantId: string, buildId: string, listId: string, outcome: { gone: boolean; readBack?: string; answer?: string; error?: string }): Promise<void> {
   const build = await getBuild(dataDir, tenantId, buildId).catch(() => null);
   const step = build?.steps.find((s) => s.id === listId);

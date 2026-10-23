@@ -9,6 +9,9 @@
  *             nothing.
  *   execute   saves a rollback snapshot first, then sends each write once,
  *             reads it back, and audits it. A build record keeps every id.
+ *             A create Sophos gave no clear answer to, with nothing read
+ *             after to look for it, is kept as unconfirmed; the next dry
+ *             run looks for it by name, and the build uses it if it's there.
  *   rollback  deletes what the build created in reverse order (policy, then
  *             profiles, then site lists; the API refuses to delete a profile
  *             or list still in use), verifies each 404, and puts Website
@@ -60,7 +63,7 @@ import { compareToSnapshot, planWebsiteManagementRestore, type RestoreStep } fro
 import { buildSnapshot, canonicalJson, type Snapshot } from "../domain/snapshot.js";
 import { readInventory } from "./inventory-reader.js";
 import { auditedWrite, auditOrWarn } from "./audit-log.js";
-import { createChecked, foundNote, isUnclearWrite, readBack, sendChecked, takenNameAdvice, type ReadBackMiss, type UnclearWriteError } from "./write-check.js";
+import { UnreadAfterWriteError, createChecked, foundNote, isUnclearWrite, readBack, sendChecked, takenNameAdvice, type ReadBackMiss, type UnclearWriteError } from "./write-check.js";
 import { loadSnapshot } from "./snapshot-store.js";
 import { runReadiness } from "./readiness.js";
 import { readText, saveFile } from "./safe-files.js";
@@ -88,8 +91,20 @@ export interface BuildStep {
   path: string;
   summary: string;
   body: Record<string, unknown>;
-  status: "planned" | "created" | "failed" | "skipped" | "deleted" | "delete-failed";
+  /**
+   * unconfirmed: Sophos didn't answer the create with a success (a 5xx, no answer in time or a dropped connection), and
+   * the tenant couldn't be read to look for it by name after, so it may have been made. There's no id; answer says what
+   * Sophos said, and readBackNote why nothing was read. The next build looks for it by name first (found).
+   */
+  status: "planned" | "created" | "unconfirmed" | "failed" | "skipped" | "deleted" | "delete-failed";
   id?: string;
+  /** Set on an unconfirmed step: what Sophos said to its create. */
+  answer?: string;
+  /**
+   * Set by a dry run on a step whose name is taken by an object an earlier build's unconfirmed step of the same kind and
+   * name asked for, which no build has an id for: its id, and that build. The build uses it rather than making another.
+   */
+  found?: { id: string; build: string };
   /** What the read-back after the create found; readBackNote says how it differed, or why it couldn't be read. */
   readBack?: "matches" | "differs" | "not-read";
   readBackNote?: string;
@@ -275,10 +290,24 @@ export async function dryRun(dataDir: string, ctx: TenantContext, pilotIn: Pilot
   const checks: Check[] = [];
   const [profiles, lists, policies] = await Promise.all([listProfiles(api, t), listSiteLists(api, t), listPolicies(api, t, "web-control")]);
 
-  const newLists = steps.filter((s) => s.kind === "site-list").length;
+  // An earlier build's create that Sophos didn't confirm, with nothing read after to look for it, may have been made:
+  // a step of the same kind and name uses what's in the tenant by that name, when no build has its id.
+  const asked = (await listBuilds(dataDir, t)).flatMap((b) => b.steps.filter((s) => s.status === "unconfirmed" && !s.id).map((s) => ({ kind: s.kind, name: s.name.toLowerCase(), build: b.id })));
+  const recorded = asked.length ? await idsCreatedByTool(dataDir, t) : new Set<string>();
+  const inTenant: Record<StepKind, Array<{ id: string; name: string }>> = { "site-list": lists, profile: profiles, policy: policies };
+  for (const s of steps) {
+    const there = inTenant[s.kind].find((x) => x.name.toLowerCase() === s.name.toLowerCase());
+    const by = there && !recorded.has(there.id) && asked.find((a) => a.kind === s.kind && a.name === s.name.toLowerCase());
+    if (!there || !by) continue;
+    s.found = { id: there.id, build: by.build };
+    s.note = FOUND_NOTE;
+  }
+
+  const newLists = steps.filter((s) => s.kind === "site-list" && !s.found).length;
+  const newProfiles = steps.some((s) => s.kind === "profile" && s.found) ? 0 : 1;
   checks.push(
-    profiles.length + 1 <= PROFILE_LIMIT
-      ? { ok: true, level: "ok", text: `Profiles: ${profiles.length} in the account, 1 to add, limit ${PROFILE_LIMIT}.` }
+    profiles.length + newProfiles <= PROFILE_LIMIT
+      ? { ok: true, level: "ok", text: `Profiles: ${profiles.length} in the account, ${newProfiles} to add, limit ${PROFILE_LIMIT}.` }
       : { ok: false, level: "fail", text: `No room for another profile: ${profiles.length} of ${PROFILE_LIMIT} used.` },
   );
   checks.push(
@@ -291,7 +320,8 @@ export async function dryRun(dataDir: string, ctx: TenantContext, pilotIn: Pilot
   const takenPolicies = new Set(policies.map((p) => p.name.toLowerCase()));
   for (const s of steps) {
     const taken = s.kind === "site-list" ? takenLists : s.kind === "profile" ? takenProfiles : takenPolicies;
-    if (taken.has(s.name.toLowerCase())) checks.push({ ok: false, level: "fail", text: `A ${s.kind.replace("-", " ")} named "${s.name}" already exists. Rename or remove it first.` });
+    if (s.found) checks.push({ ok: true, level: "warn", text: `The ${s.kind.replace("-", " ")} "${s.name}" is in the tenant. An earlier build asked for it and Sophos didn't confirm it was made, so this build uses it rather than making another.` });
+    else if (taken.has(s.name.toLowerCase())) checks.push({ ok: false, level: "fail", text: `A ${s.kind.replace("-", " ")} named "${s.name}" already exists. Rename or remove it first.` });
     const max = s.kind === "policy" ? 100 : NAME_MAX;
     if (s.name.length > max) checks.push({ ok: false, level: "fail", text: `The ${s.kind.replace("-", " ")} name "${s.name}" is ${s.name.length} characters; the API takes ${max}.` });
     const desc = typeof s.body.description === "string" ? s.body.description : "";
@@ -362,6 +392,9 @@ export async function dryRun(dataDir: string, ctx: TenantContext, pilotIn: Pilot
   };
 }
 
+/** The note on a step the dry run found by name (see BuildStep.found). */
+const FOUND_NOTE = "Found by name: an earlier build asked for it and Sophos didn't confirm it, so it's used, not made again.";
+
 /** A create that is sent once, read back by name when Sophos gives no clear answer (then kept in unclear), and audited with the id it made. */
 export async function auditedCreate<T extends { id: string }>(
   tenantId: string,
@@ -419,19 +452,26 @@ export async function execute(
 
   const listIds: Record<string, string> = {};
   let profileId: string | null = null;
+  /** A step the dry run found by name: no create is sent, and the audit log says it was used. Its note stays. */
+  const use = async (step: BuildStep & { found: NonNullable<BuildStep["found"]> }): Promise<{ value: { id: string }; note?: string }> => {
+    await auditOrWarn({ tenantId: t, action: "reuse", resource: step.kind, resourceId: step.found.id, ok: true, detail: { name: step.name, buildId: record.id, askedBy: step.found.build, note: FOUND_NOTE } });
+    return { value: { id: step.found.id }, note: step.note };
+  };
   try {
     for (const step of record.steps) {
       if (step.kind === "site-list") {
         const body = step.body as { name: string; description?: string; sites: string[] };
-        const { value, note } = await auditedCreate(
-          t,
-          "site-list",
-          () => createSiteList(api, t, body),
-          async () => (await listSiteLists(new ReadOnlyApi(api), t)).find((l) => l.name === body.name) ?? null,
-          "the site list",
-          { where: "the tenant's site lists", found: `no site list named "${body.name}"`, advice: takenNameAdvice(`the site list "${body.name}"`, "a rollback", "build again") },
-          { name: body.name, sites: body.sites.length, buildId: record.id },
-        );
+        const { value, note } = step.found
+          ? await use({ ...step, found: step.found })
+          : await auditedCreate(
+              t,
+              "site-list",
+              () => createSiteList(api, t, body),
+              async () => (await listSiteLists(new ReadOnlyApi(api), t)).find((l) => l.name === body.name) ?? null,
+              "the site list",
+              { where: "the tenant's site lists", found: `no site list named "${body.name}"`, advice: takenNameAdvice(`the site list "${body.name}"`, "a rollback", "build again") },
+              { name: body.name, sites: body.sites.length, buildId: record.id },
+            );
         step.id = value.id;
         step.note = note;
         listIds[step.key] = value.id;
@@ -457,15 +497,17 @@ export async function execute(
           });
         }
         step.body = body;
-        const { value, note } = await auditedCreate(
-          t,
-          "profile",
-          () => createProfile(api, t, body),
-          async () => (await listProfiles(new ReadOnlyApi(api), t)).find((p) => p.name === body.name) ?? null,
-          "the profile",
-          { where: "the tenant's profiles", found: `no profile named "${String(body.name)}"`, advice: takenNameAdvice(`the profile "${String(body.name)}"`, "a rollback", "build again") },
-          { name: body.name, buildId: record.id },
-        );
+        const { value, note } = step.found
+          ? await use({ ...step, found: step.found })
+          : await auditedCreate(
+              t,
+              "profile",
+              () => createProfile(api, t, body),
+              async () => (await listProfiles(new ReadOnlyApi(api), t)).find((p) => p.name === body.name) ?? null,
+              "the profile",
+              { where: "the tenant's profiles", found: `no profile named "${String(body.name)}"`, advice: takenNameAdvice(`the profile "${String(body.name)}"`, "a rollback", "build again") },
+              { name: body.name, buildId: record.id },
+            );
         step.id = value.id;
         step.note = note;
         profileId = value.id;
@@ -489,15 +531,17 @@ export async function execute(
         if (!profileId) throw new Error("No profile was created, so the pilot policy wasn't sent.");
         const body = pilotPolicyBody(record.pilot.name, profileId, record.pilot.targets, record.pilot.enabled);
         step.body = body;
-        const { value, note } = await auditedCreate(
-          t,
-          "policy",
-          () => createPolicy(api, t, body),
-          async () => (await listPolicies(new ReadOnlyApi(api), t, "web-control")).find((p) => p.name === body.name) ?? null,
-          "the pilot policy",
-          { where: "the tenant's Web Control policies", found: `no policy named "${String(body.name)}"`, advice: takenNameAdvice(`the policy "${String(body.name)}"`, "a rollback", "build again") },
-          { name: body.name, appliesTo: body.appliesTo, buildId: record.id },
-        );
+        const { value, note } = step.found
+          ? await use({ ...step, found: step.found })
+          : await auditedCreate(
+              t,
+              "policy",
+              () => createPolicy(api, t, body),
+              async () => (await listPolicies(new ReadOnlyApi(api), t, "web-control")).find((p) => p.name === body.name) ?? null,
+              "the pilot policy",
+              { where: "the tenant's Web Control policies", found: `no policy named "${String(body.name)}"`, advice: takenNameAdvice(`the policy "${String(body.name)}"`, "a rollback", "build again") },
+              { name: body.name, appliesTo: body.appliesTo, buildId: record.id },
+            );
         step.id = value.id;
         step.note = note;
         step.status = "created";
@@ -515,12 +559,19 @@ export async function execute(
     record.status = "built";
   } catch (err) {
     const step = record.steps.find((s) => s.status === "planned");
-    if (step) {
+    if (step && err instanceof UnreadAfterWriteError) {
+      // Sophos didn't answer the create with a success, and the tenant couldn't be read to look for it by name: it may
+      // have been made. Not confirmed, not failed; there's no id, so the next build looks for it by name first.
+      step.status = "unconfirmed";
+      step.answer = err.answer;
+      step.readBack = "not-read";
+      step.readBackNote = err.unread;
+    } else if (step) {
       step.status = "failed";
       step.error = err instanceof Error ? err.message : String(err);
     }
-    record.status = record.steps.some((s) => s.status === "created") ? "partial" : "failed";
-    log.emit("error", SECTION, `Build stopped: ${step?.error ?? String(err)}`, { tenant: t });
+    record.status = record.steps.some((s) => s.status === "created" || s.status === "unconfirmed") ? "partial" : "failed";
+    log.emit("error", SECTION, `Build stopped: ${step?.error ?? (err instanceof Error ? err.message : String(err))}`, { tenant: t });
   }
   record.finishedAt = new Date().toISOString();
   await saveRecord(dataDir, record);
