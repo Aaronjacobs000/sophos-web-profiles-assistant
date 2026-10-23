@@ -211,8 +211,11 @@ export async function getBuild(dataDir: string, tenantId: string, id: string): P
 /** What each kind's name lookup reads, in the words a create's error uses. */
 const LOOKUP_WHERE: Record<StepKind, string> = { "site-list": "the tenant's site lists", profile: "the tenant's profiles", policy: "the tenant's Web Control policies" };
 
-/** What an unconfirmed step that was in flight when the server stopped says Sophos answered, and why nothing was read. */
-const IN_FLIGHT = { answer: "The tool stopped before it saved what Sophos answered", unread: "none was saved" };
+/**
+ * What an unconfirmed step that was in flight when the server stopped says Sophos answered, and why nothing was read.
+ * Create site lists and an Allow say the same of a write of theirs in flight.
+ */
+export const IN_FLIGHT = { answer: "The tool stopped before it saved what Sophos answered", unread: "none was saved" };
 
 /**
  * A build record as saved, read the way v0.3.25 sees it. Before v0.3.24 a create Sophos didn't answer with a success,

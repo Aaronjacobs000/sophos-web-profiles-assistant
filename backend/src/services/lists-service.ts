@@ -7,7 +7,10 @@
  * 5xx or no answer is read back, as in a build rollback. So can a delete
  * Sophos refused, as a rollback sends one again. A list Sophos didn't confirm
  * was made has no id: undo looks for it by name first, as the next create
- * does, and deletes it by the id found.
+ * does, and deletes it by the id found. Each list is saved to the record as
+ * it's sent, marked as sending before its create goes, so a server that
+ * stops mid-run leaves the lists it made on record and the one in flight
+ * unconfirmed, as a build does.
  */
 
 import { promises as fs } from "node:fs";
@@ -15,7 +18,7 @@ import path from "node:path";
 import { siteListsFrom, type CleanupResult, type SiteListOut } from "../domain/cleanup.js";
 import { ReadOnlyApi, errorStatus, type TenantApi } from "../sophos/api/requester.js";
 import { createSiteList, deleteSiteList, getSiteList, listSiteLists, listSites } from "../sophos/api/web-filters.js";
-import { auditedCreate, foundByName, idsCreatedByTool, lookUpByName, sameSites } from "./build-service.js";
+import { IN_FLIGHT, auditedCreate, foundByName, idsCreatedByTool, lookUpByName, sameSites } from "./build-service.js";
 import { auditOrWarn } from "./audit-log.js";
 import { UnreadAfterWriteError, isUnclearWrite, readBack, takenNameAdvice, unreadCreateFrom } from "./write-check.js";
 import { readText, saveFile } from "./safe-files.js";
@@ -35,8 +38,10 @@ export interface ListsRecord {
    * it by name after (answer, and "not read: " in readBack), so it may have been made. There's no id; the next create
    * looks for it by name first, and uses it if it's there (note). So does undo: lookedUp says what it found, "found"
    * (then deleted by its id, as status says), "not found" (status "not there") or "not read: " and why (still unconfirmed).
+   * sending: set, and saved, just before the list's create is sent, and cleared once its outcome is recorded. A list saved
+   * with it and still planned was in flight when the server stopped, so it may have been made: it's read as unconfirmed.
    */
-  lists: Array<{ name: string; action: string; sites: number; id?: string; status: string; readBack?: string; answer?: string; note?: string; lookedUp?: string; deleteAnswer?: string; error?: string }>;
+  lists: Array<{ name: string; action: string; sites: number; id?: string; status: string; readBack?: string; answer?: string; note?: string; lookedUp?: string; deleteAnswer?: string; error?: string; sending?: boolean }>;
 }
 
 function recordPath(dataDir: string, scope: string): string {
@@ -49,8 +54,16 @@ export async function lastListsRecord(dataDir: string, scope: string): Promise<L
   if (!text) return null;
   const r = JSON.parse(text) as ListsRecord;
   // Before v0.3.24 a create Sophos didn't answer with a success, with the site lists unread after, was saved as failed
-  // with no id: it's unconfirmed, so the next create and undo look for it by name. The file isn't changed.
+  // with no id: it's unconfirmed, so the next create and undo look for it by name. So is a list whose create was in
+  // flight when the server stopped (sending), as a build step is. The file isn't changed.
   for (const row of r.lists) {
+    if (row.status === "planned" && row.sending && !row.id) {
+      row.status = "unconfirmed";
+      row.answer = IN_FLIGHT.answer;
+      row.readBack = `not read: ${IN_FLIGHT.unread}`;
+      delete row.sending;
+      continue;
+    }
     const was = row.status === "failed" && !row.id ? unreadCreateFrom(row.error, "the tenant's site lists") : null;
     if (!was) continue;
     row.status = "unconfirmed";
@@ -110,6 +123,9 @@ export async function createLists(dataDir: string, api: TenantApi, tenantId: str
   const plan = await planLists(api, tenantId, results, prefix, { dataDir, scope });
   if (plan.problems.length) throw new Error(plan.problems.join(" "));
   const record: ListsRecord = { tenantId, scope, createdAt: new Date().toISOString(), lists: [] };
+  const file = recordPath(dataDir, scope);
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const save = () => saveFile(file, JSON.stringify(record, null, 2), { section: "cleanup", mode: 0o600 });
   for (const l of plan.lists) {
     const row: ListsRecord["lists"][number] = { name: l.name, action: l.action, sites: l.sites.length, status: "planned" };
     record.lists.push(row);
@@ -119,6 +135,10 @@ export async function createLists(dataDir: string, api: TenantApi, tenantId: str
         // Found by name in the dry run just read: no create is sent, and the audit log says it was used.
         row.note = FOUND_NOTE;
         await auditOrWarn({ tenantId, action: "reuse", resource: "site-list", resourceId: found.id, ok: true, detail: { name: l.name, scope, note: FOUND_NOTE } });
+      } else {
+        // Marked and saved before its create goes, so a server that stops before its outcome is recorded leaves it as sent (lastListsRecord).
+        row.sending = true;
+        await save();
       }
       const value = found
         ? { id: found.id }
@@ -133,8 +153,11 @@ export async function createLists(dataDir: string, api: TenantApi, tenantId: str
               { name: l.name, sites: l.sites.length, scope },
             )
           ).value;
+      delete row.sending;
       row.id = value.id;
       row.status = "created";
+      // On record with its id before the read-back, so Undo can delete it if the server stops.
+      await save();
       // Made: a read-back that fails or differs leaves it unconfirmed, and the next list is still sent.
       const ro = new ReadOnlyApi(api);
       const back = await readBack(async () => {
@@ -145,6 +168,7 @@ export async function createLists(dataDir: string, api: TenantApi, tenantId: str
       else if (sameSites(l.sites, back.value)) row.readBack = "matches";
       else row.readBack = back.value.length === l.sites.length ? "read back with other sites than were sent" : `read back ${back.value.length} ${back.value.length === 1 ? "site" : "sites"}, not the ${l.sites.length} sent`;
     } catch (err) {
+      delete row.sending;
       if (err instanceof UnreadAfterWriteError) {
         // No clear answer, and the site lists couldn't be read to look for it by name: it may have been made. Not
         // confirmed, not failed; there's no id, so the next create looks for it by name first.
@@ -158,9 +182,7 @@ export async function createLists(dataDir: string, api: TenantApi, tenantId: str
       break;
     }
   }
-  const file = recordPath(dataDir, scope);
-  await fs.mkdir(path.dirname(file), { recursive: true });
-  await saveFile(file, JSON.stringify(record, null, 2), { section: "cleanup", mode: 0o600 });
+  await save();
   return record;
 }
 
