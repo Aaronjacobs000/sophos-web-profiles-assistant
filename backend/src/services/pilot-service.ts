@@ -488,12 +488,6 @@ const allowConfirmed = (readBack: string | undefined) => !!readBack && readBack.
 const FOUND_LIST = "The list was found by name.";
 const NOTHING_TO_REMOVE = "No list by that name in the tenant, so there was nothing to remove.";
 
-/**
- * Marks the pilot allows list in the build record as deleted, or as a delete that didn't finish, so a rollback knows.
- * A delete that wasn't confirmed keeps its read-back ("still there", or "not read: " and why), and what Sophos said when
- * it didn't answer with a success, as a rollback keeps them, so the Build page shows it as not confirmed, not failed.
- * One that failed keeps why (error), for the Build page's Detail line.
- */
 /** Adds the pilot allows list to the build record, so rolling the build back deletes it. */
 async function ownedByBuild(dataDir: string, tenantId: string, buildId: string, listId: string, name: string): Promise<void> {
   const build = await getBuild(dataDir, tenantId, buildId);
@@ -522,6 +516,12 @@ async function ownedByBuild(dataDir: string, tenantId: string, buildId: string, 
   await saveRecord(dataDir, build);
 }
 
+/**
+ * Marks the pilot allows list in the build record as deleted, or as a delete that didn't finish, so a rollback knows.
+ * A delete that wasn't confirmed keeps its read-back ("still there", or "not read: " and why), and what Sophos said when
+ * it didn't answer with a success, as a rollback keeps them, so the Build page shows it as not confirmed, not failed.
+ * One that failed keeps why (error), for the Build page's Detail line.
+ */
 async function markListDeleted(dataDir: string, tenantId: string, buildId: string, listId: string, outcome: { gone: boolean; readBack?: string; answer?: string; error?: string }): Promise<void> {
   const build = await getBuild(dataDir, tenantId, buildId).catch(() => null);
   const step = build?.steps.find((s) => s.id === listId);

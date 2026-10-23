@@ -29,7 +29,7 @@ const READ_BACK = { matches: "matches", differs: "differs", "not-read": "not rea
  * read, goes on the Detail line. A delete not confirmed says Roll back again only when a rollback has run for the step;
  * otherwise it's from an Allow undo, which is sent again from the Pilot page. A step Sophos didn't confirm was made says
  * what a rollback did when it looked for it by name: deleted it (Rolled back), found nothing (Nothing to remove, muted),
- * or couldn't read the tenant (amber).
+ * or couldn't read the tenant (amber). A step the build stopped before was never sent: Not sent, muted, rolled back or not.
  */
 function stepState(s, rec) {
   const tag = (cls, label) => `<span class="tag ${cls}">${label}</span>`;
@@ -38,7 +38,7 @@ function stepState(s, rec) {
   const again = rolled ? "Roll back again, or check it in Sophos Fusion." : "Undo the Allow again on the Pilot page, or check it in Sophos Fusion.";
   switch (s.status) {
     case "planned":
-      return { tag: tag("tag-muted", "Dry run OK") };
+      return { tag: tag("tag-muted", rec.status === "dry-run" ? "Dry run OK" : "Not sent") };
     case "created":
       if (s.readBack === "matches") return { tag: tag(OUTCOME_TAG.confirmed, "Created") };
       return {
@@ -146,6 +146,24 @@ function lookedUpText(steps) {
     .filter((o) => (o.lookedUp === "found" && o.status.startsWith("deleted")) || o.lookedUp === "not found")
     .map((o) => ` The ${(KIND[o.kind] ?? "object").toLowerCase()} "${o.name}", which Sophos didn't confirm was made, ${o.lookedUp === "found" ? "was found by name and deleted" : "isn't in the tenant, so there was nothing to remove"}.`)
     .join("");
+}
+
+/**
+ * What the rollback's confirm asks: the objects it deletes, in that order, the steps it looks for by name, and the
+ * Website Management changes. When there's nothing to delete or look for, it says so.
+ */
+function rollbackQuestion(plan) {
+  const named = (xs) => xs.map((s) => `${(KIND[s.kind] ?? "object").toLowerCase()} "${s.name}"`).join(", ");
+  const objs = plan.steps.filter((s) => s.id && s.status !== "deleted");
+  // Steps Sophos didn't confirm were made have no id: the rollback looks for them by name.
+  const asked = plan.steps.filter((s) => s.status === "unconfirmed" && !s.id);
+  const wm = plan.restorePlan?.length ?? 0;
+  const refused = plan.restoreRefused ? `\n\n${plan.restoreRefused}` : "";
+  if (!objs.length && !asked.length) {
+    return `${wm ? `Roll back: there's nothing to delete. Put back ${wm} Website Management ${wm === 1 ? "change" : "changes"} from the snapshot?` : "There's nothing to delete and no Website Management changes to put back. Roll back anyway?"}${refused}`;
+  }
+  const does = [...(objs.length ? [`delete ${named(objs)} in that order`] : []), ...(asked.length ? [`look for ${named(asked)} by name, which Sophos didn't confirm ${asked.length === 1 ? "was" : "were"} made, and delete ${asked.length === 1 ? "it" : "them"} if there`] : [])];
+  return `Roll back: ${does.join(", and ")}${wm ? `, and ${wm} Website Management changes from the snapshot` : ""}?${refused}`;
 }
 
 /** Says what a build or rollback did, and that the list of builds couldn't be read after it when that failed: amber at best, with both reasons. */
@@ -282,12 +300,7 @@ function render() {
     b.addEventListener("click", async () => {
       try {
         const plan = await api.post(`/api/build/${t}/${b.dataset.rollback}/rollback`, { dryRun: true });
-        const objs = plan.steps.filter((s) => s.id && s.status !== "deleted");
-        // Steps Sophos didn't confirm were made have no id: the rollback looks for them by name.
-        const asked = plan.steps.filter((s) => s.status === "unconfirmed" && !s.id);
-        const wm = plan.restorePlan?.length ?? 0;
-        const does = [...(objs.length || !asked.length ? [`delete ${objs.map((s) => `${s.kind} "${s.name}"`).join(", ")} in that order`] : []), ...(asked.length ? [`look for ${asked.map((s) => `${s.kind} "${s.name}"`).join(", ")} by name, which Sophos didn't confirm ${asked.length === 1 ? "was" : "were"} made, and delete ${asked.length === 1 ? "it" : "them"} if there`] : [])];
-        if (!window.confirm(`Roll back: ${does.join(", and ")}${wm ? `, and ${wm} Website Management changes from the snapshot` : ""}?${plan.restoreRefused ? `\n\n${plan.restoreRefused}` : ""}`)) return;
+        if (!window.confirm(rollbackQuestion(plan))) return;
         lastPlan = await api.post(`/api/build/${t}/${b.dataset.rollback}/rollback`, { dryRun: false });
       } catch (err) {
         toast("Couldn't roll back the build.", OUTCOME_TOAST.failed, 10000, err.message);

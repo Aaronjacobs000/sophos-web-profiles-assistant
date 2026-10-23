@@ -150,7 +150,7 @@ test("Build: Roll back says what it did with a step Sophos didn't confirm, found
 
     const found = await run("found");
     assert.deepEqual([found.kind, found.text, found.detail], ["toast-ok", `Rolled back. The site list "${name}", which Sophos didn't confirm was made, was found by name and deleted.`, null]);
-    assert.match(found.asked[0], new RegExp(`look for site-list "${name}" by name, which Sophos didn't confirm was made, and delete it if there\\?$`));
+    assert.match(found.asked[0], new RegExp(`look for site list "${name}" by name, which Sophos didn't confirm was made, and delete it if there\\?$`));
     assert.deepEqual((await b.evaluate(ROWS("Plan", ".steps-list > li")))[0], [["Rolled back", "tag-muted"], null, null]);
 
     const notFound = await run("not-found");
