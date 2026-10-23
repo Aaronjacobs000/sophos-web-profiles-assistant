@@ -4,7 +4,7 @@
 
 import { api } from "./api.js";
 import { currentTenantId, getStatus, initShell, setTenant } from "./shell.js";
-import { OUTCOME_TAG, OUTCOME_TOAST, buildHeadline, detailHtml, errorBanner, esc, escAttr, readBackParts, sentence, unconfirmedReason } from "./ui.js";
+import { OUTCOME_TAG, OUTCOME_TOAST, buildHeadline, detailHtml, errorBanner, esc, escAttr, readBackParts, sentence, unansweredReason, unconfirmedReason } from "./ui.js";
 import { icon } from "./icons.js";
 import { toast } from "./toast.js";
 import { diffHtml } from "./diff-view.js";
@@ -23,14 +23,17 @@ const READ_BACK = { matches: "matches", differs: "differs", "not-read": "not rea
 
 /**
  * A step's tag and the plain line under it (category C): Created is green only when the read-back matched what was
- * sent; amber when Sophos made it, or accepted its delete, but the read-back didn't confirm it; red when it failed.
- * A delete Sophos didn't answer with a success (a 5xx, a 404, or no answer) wasn't accepted, and the line says so.
- * How it differed, or why it couldn't be read, goes on the Detail line.
+ * sent; amber when Sophos made it, or accepted its delete, but the read-back didn't confirm it, or didn't answer its
+ * create with a success and nothing could be read to look for it; red when it failed. A delete Sophos didn't answer with
+ * a success (a 5xx, a 404, or no answer) wasn't accepted, and the line says so. How it differed, or why it couldn't be
+ * read, goes on the Detail line. A delete not confirmed says Roll back again only when a rollback has run for the step;
+ * otherwise it's from an Allow undo, which is sent again from the Pilot page.
  */
 function stepState(s, rec) {
   const tag = (cls, label) => `<span class="tag ${cls}">${label}</span>`;
   // What the last rollback found for this step: why its delete failed, when it did.
   const rolled = rec.rollback?.steps.find((o) => o.id && o.id === s.id);
+  const again = rolled ? "Roll back again, or check it in Sophos Fusion." : "Undo the Allow again on the Pilot page, or check it in Sophos Fusion.";
   switch (s.status) {
     case "planned":
       return { tag: tag("tag-muted", "Dry run OK") };
@@ -41,6 +44,9 @@ function stepState(s, rec) {
         note: s.readBack === "differs" ? "Sophos made it, but it didn't read back as sent." : s.readBack === "not-read" ? "Sophos made it, but the tool couldn't read it back, so it isn't confirmed." : "Sophos made it, but it isn't confirmed.",
         detail: s.readBackNote ?? (s.readBack ? "" : "No read-back on record."),
       };
+    case "unconfirmed":
+      // Sophos didn't answer the create with a success, and nothing could be read to look for it by name: it may be there.
+      return { tag: tag(OUTCOME_TAG.unconfirmed, "Not confirmed"), note: UNCONFIRMED_NOTE, detail: unansweredReason(s.answer, `not read: ${s.readBackNote ?? ""}`) };
     case "failed":
       return { tag: tag(OUTCOME_TAG.failed, "Failed"), note: s.error ? "This step failed, so the build stopped here." : "", detail: s.error };
     case "deleted":
@@ -48,9 +54,9 @@ function stepState(s, rec) {
     case "delete-failed":
       if (s.deleteReadBack && s.deleteAnswer) {
         const back = readBackParts(s.deleteReadBack);
-        return { tag: tag(OUTCOME_TAG.unconfirmed, "Delete not confirmed"), note: "Sophos didn't say the delete went through, and the read-back didn't confirm it's gone. Roll back again, or check it in Sophos Fusion.", detail: `${sentence(s.deleteAnswer)} Read back: ${sentence(back.detail || back.plain)}` };
+        return { tag: tag(OUTCOME_TAG.unconfirmed, "Delete not confirmed"), note: `Sophos didn't say the delete went through, and the read-back didn't confirm it's gone. ${again}`, detail: `${sentence(s.deleteAnswer)} Read back: ${sentence(back.detail || back.plain)}` };
       }
-      if (s.deleteReadBack) return { tag: tag(OUTCOME_TAG.unconfirmed, "Delete not confirmed"), note: "Sophos accepted the delete, but the read-back didn't confirm it's gone. Roll back again, or check it in Sophos Fusion.", detail: unconfirmedReason(s.deleteReadBack) };
+      if (s.deleteReadBack) return { tag: tag(OUTCOME_TAG.unconfirmed, "Delete not confirmed"), note: `Sophos accepted the delete, but the read-back didn't confirm it's gone. ${again}`, detail: unconfirmedReason(s.deleteReadBack) };
       // An Allow undo's delete of the pilot allows list that a read-back still found keeps why on the step; a rollback's is in the rollback.
       if (s.deleteError) return { tag: tag(OUTCOME_TAG.failed, "Delete failed"), note: "The delete failed. Undo the Allow again on the Pilot page, or check it in Sophos Fusion.", detail: s.deleteError };
       return { tag: tag(OUTCOME_TAG.failed, "Delete failed"), note: rolled?.error ? "The delete failed. Roll back again, or check it in Sophos Fusion." : "", detail: rolled?.error };
@@ -58,6 +64,9 @@ function stepState(s, rec) {
       return { tag: "" };
   }
 }
+
+// A create Sophos didn't answer with a success, with nothing read after to look for it: it may be in the tenant.
+const UNCONFIRMED_NOTE = "Sophos didn't say it was made, and the read-back didn't confirm it. The next build looks for it by name first and uses it if it's there.";
 
 /** What a step's read-back didn't confirm, for the Detail line of a message. */
 function stepReason(s) {
@@ -76,6 +85,9 @@ function buildOutcome(rec) {
     const which = open.length === 1 ? `the ${(KIND[open[0].kind] ?? "object").toLowerCase()} "${open[0].name}"` : `${open.length} of the ${created.length} objects`;
     return { state: "unconfirmed", text: `Built, but the read-back didn't confirm ${which}.`, reason: open.map(stepReason).join(" ") };
   }
+  // A create Sophos didn't answer with a success, with nothing read after to look for it, may have been made.
+  const unknown = rec.steps.find((s) => s.status === "unconfirmed");
+  if (unknown) return { state: "unconfirmed", text: `${buildHeadline(rec)}. Sophos didn't say the ${(KIND[unknown.kind] ?? "object").toLowerCase()} "${unknown.name}" was made, and the read-back didn't confirm it.`, reason: unansweredReason(unknown.answer, `not read: ${unknown.readBackNote ?? ""}`) };
   const failed = rec.steps.find((s) => s.status === "failed");
   const check = rec.checks.find((c) => !c.ok);
   const reason = failed?.error ? sentence(failed.error) : check ? [check.text, check.detail].filter(Boolean).map(sentence).join(" ") : "";

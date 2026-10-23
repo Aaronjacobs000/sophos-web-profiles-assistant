@@ -42,6 +42,9 @@ function allowRow(a) {
       // Sophos didn't answer the link with a success and the profile couldn't be read after, so it isn't known whether it went through.
       if (linkUnknown(a)) return { tag: tag(OUTCOME_TAG.unconfirmed, "Not confirmed"), note: LINK_UNKNOWN_NOTE, detail: unansweredReason(a.answer, a.readBack) };
       return { tag: tag(OUTCOME_TAG.unconfirmed, "Not finished"), note: PARTIAL_NOTE, detail: withError };
+    case "unconfirmed":
+      // Sophos didn't answer the new list's create with a success, and nothing could be read to look for it: it may be there.
+      return { tag: tag(OUTCOME_TAG.unconfirmed, "Not confirmed"), note: "Sophos didn't say the Allow went through, and the read-back didn't confirm it. Allow it again: the tool looks for the list by name first.", detail: unansweredReason(a.answer, a.readBack) };
     case "failed":
       return { tag: tag(OUTCOME_TAG.failed, "Failed"), note: "The Allow didn't finish.", detail: withError };
     case "undone":
@@ -292,7 +295,7 @@ async function reread() {
 function allowModal(plan) {
   document.getElementById("results-modal")?.remove();
   const steps = plan.steps
-    .map((s) => (s.op === "add-site" ? `Add ${s.site} to the site list "${s.listName}".` : s.op === "create-list" ? `Create the site list "${s.name}" with ${s.site}.` : `Link it to the profile "${s.profileName}" as Allow, priority ${s.priority} (the profile is sent whole, as the API requires, and read back).`))
+    .map((s) => (s.op === "add-site" ? `Add ${s.site} to the site list "${s.listName}".` : s.op === "create-list" ? `Create the site list "${s.name}" with ${s.site}.` : s.op === "use-list" ? `Use the site list "${s.name}" the Allow for ${s.site} asked for, found by name, rather than make another.` : `Link it to the profile "${s.profileName}" as Allow, priority ${s.priority} (the profile is sent whole, as the API requires, and read back).`))
     .map((x) => `<li>${esc(x)}</li>`)
     .join("");
   const modal = document.createElement("div");
@@ -318,15 +321,17 @@ function allowModal(plan) {
       const r = await api.post(`/api/pilot/${encodeURIComponent(tenantId)}/allow`, { host: plan.host, dryRun: false });
       close();
       const back = readBackParts(r.entry.readBack);
+      // A list found by name, which an earlier Allow asked for, is said: it was used, not made again.
+      const used = r.entry.note ? ` ${r.entry.note}` : "";
       // Green only when the read-back confirmed the Allow; a list that couldn't be read, or a read-back without the site or link, leaves it
       // unconfirmed, with what was read (or why it couldn't be) on the Detail line.
       if (linkUnknown(r.entry)) toast(`Sophos made the list for ${r.entry.site}, but didn't say its link to the profile went through, and the read-back didn't confirm it. Undo it from Allow entries.`, OUTCOME_TOAST.unconfirmed, 10000, unansweredReason(r.entry.answer, r.entry.readBack));
       else if (r.entry.status === "partial") toast(`Sophos made the list for ${r.entry.site}, but its link to the profile didn't go through. Undo it from Allow entries.`, OUTCOME_TOAST.unconfirmed, 10000, r.entry.error);
-      else if (allowConfirmed(r.entry.readBack)) toast(`Allowed ${r.entry.site}: ${back.plain}.`, OUTCOME_TOAST.confirmed, 9000);
+      else if (allowConfirmed(r.entry.readBack)) toast(`Allowed ${r.entry.site}: ${back.plain}.${used}`, OUTCOME_TOAST.confirmed, 9000);
       // Sophos didn't answer with a success (a 5xx, or no answer), so it isn't called accepted.
-      else if (r.entry.answer) toast(`Sophos didn't say the Allow for ${r.entry.site} went through, and the read-back didn't confirm it.`, OUTCOME_TOAST.unconfirmed, 10000, unansweredReason(r.entry.answer, r.entry.readBack));
-      else if (back.detail) toast(`Sophos accepted the Allow for ${r.entry.site}, but ${unreadParts(back.plain)} couldn't be read back, so it isn't confirmed.`, OUTCOME_TOAST.unconfirmed, 10000, back.detail);
-      else toast(`Sophos accepted the Allow for ${r.entry.site}, but the read-back didn't confirm it.`, OUTCOME_TOAST.unconfirmed, 10000, unconfirmedReason(r.entry.readBack));
+      else if (r.entry.answer) toast(`Sophos didn't say the Allow for ${r.entry.site} went through, and the read-back didn't confirm it.${used}`, OUTCOME_TOAST.unconfirmed, 10000, unansweredReason(r.entry.answer, r.entry.readBack));
+      else if (back.detail) toast(`Sophos accepted the Allow for ${r.entry.site}, but ${unreadParts(back.plain)} couldn't be read back, so it isn't confirmed.${used}`, OUTCOME_TOAST.unconfirmed, 10000, back.detail);
+      else toast(`Sophos accepted the Allow for ${r.entry.site}, but the read-back didn't confirm it.${used}`, OUTCOME_TOAST.unconfirmed, 10000, unconfirmedReason(r.entry.readBack));
       await reread();
     } catch (err) {
       toast(`Couldn't allow ${plan.site ?? plan.host}.`, OUTCOME_TOAST.failed, 10000, err.message);

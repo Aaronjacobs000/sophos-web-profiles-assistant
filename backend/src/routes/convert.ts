@@ -174,7 +174,7 @@ convertRouter.post("/cleanup/:tenantId/lists", jsonOnly, async (req, res) => {
     const run = await getRun(dataDir, ctx.tenantId);
     if (!run) return fail(res, new Error("Run the clean-up first."), 409);
     const prefix = (b.prefix?.trim() || `${ctx.summary.displayName} cleaned`).slice(0, 80);
-    if (b.dryRun !== false) return res.json(await planLists(ctx.client, ctx.tenantId, withDecisions(run), prefix));
+    if (b.dryRun !== false) return res.json(await planLists(ctx.client, ctx.tenantId, withDecisions(run), prefix, { dataDir, scope: ctx.tenantId }));
     res.json(await createLists(dataDir, ctx.client, ctx.tenantId, ctx.tenantId, withDecisions(run), prefix));
   } catch (err) {
     fail(res, err);
@@ -247,7 +247,7 @@ convertRouter.post("/cleaner/lists", jsonOnly, async (req, res) => {
     const run = await getRun(dataDir, "cleaner");
     if (!run) return fail(res, new Error("Classify a list first."), 409);
     const prefix = (b.prefix?.trim() || "Cleaned").slice(0, 80);
-    if (b.dryRun !== false) return res.json(await planLists(ctx.client, ctx.tenantId, withDecisions(run), prefix));
+    if (b.dryRun !== false) return res.json(await planLists(ctx.client, ctx.tenantId, withDecisions(run), prefix, { dataDir, scope: "cleaner" }));
     res.json(await createLists(dataDir, ctx.client, ctx.tenantId, "cleaner", withDecisions(run), prefix));
   } catch (err) {
     fail(res, err);

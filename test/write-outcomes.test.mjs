@@ -16,7 +16,9 @@
 // From v0.3.23 it never says the write didn't go through either, and it
 // covers the pilot switch, a restore step, a rollback's Website Management
 // change, an Allow's link, and a list or entry a create made that was found
-// by name but not read back.
+// by name but not read back. From v0.3.24 it covers a create whose name
+// lookup couldn't be read after a 5xx: a build step, an Allow's new list and
+// a list from Create site lists.
 // A new action or row that reports a write's outcome belongs in this table.
 
 import { test } from "node:test";
@@ -148,6 +150,7 @@ const createLists = (scope) => ({
   steps: [click("#create-lists")],
   confirmed: listsWrite(scope, [listRow(0), listRow(1)]),
   unconfirmed: [listsWrite(scope, [listRow(0), listRow(1, { readBack: "read back 0 sites, not the 1 sent" })]), listsWrite(scope, [listRow(0, { readBack: NOT_READ }), listRow(1)]), listsWrite(scope, [listRow(0), { name: LISTS[1], action: "warn", sites: 1, status: "failed", error: RAW }])],
+  unanswered: [listsWrite(scope, [{ name: LISTS[0], action: "block", sites: 1, status: "unconfirmed", answer: UNCLEAR, readBack: NOT_READ }]), listsWrite(scope, [listRow(0), { name: LISTS[1], action: "warn", sites: 1, status: "unconfirmed", answer: UNCLEAR, readBack: NOT_READ }])],
   failed: [listsWrite(scope, [{ name: LISTS[0], action: "block", sites: 1, status: "failed", error: RAW }, { name: LISTS[1], action: "warn", sites: 1, status: "planned" }]), { [`POST /api/${scope === "cleaner" ? "cleaner" : `cleanup/${T}`}/lists`]: FAIL }],
 });
 const undoWrite = (rows) => ({ [`POST /api/cleanup/${T}/lists`]: { tenantId: T, scope: T, createdAt: now, lists: rows } });
@@ -176,6 +179,10 @@ const ACTIONS = [
       executeWrite(buildRec("built", [step(1, "site-list", { readBack: "not-read", readBackNote: RAW }), step(2, "profile"), step(3, "policy")])),
       executeWrite(buildRec("built", [step(1, "site-list"), step(2, "profile", { readBack: "differs", readBackNote: "Read back 0 sites." }), step(3, "policy")])),
       executeWrite(buildRec("partial", [step(1, "site-list"), step(2, "profile", { status: "failed", error: RAW, readBack: undefined, id: undefined }), step(3, "policy", { status: "planned", readBack: undefined, id: undefined })])),
+    ],
+    unanswered: [
+      executeWrite(buildRec("partial", [step(1, "site-list", { status: "unconfirmed", id: undefined, answer: UNCLEAR, readBack: "not-read", readBackNote: RAW }), step(2, "profile", { status: "planned", readBack: undefined, id: undefined }), step(3, "policy", { status: "planned", readBack: undefined, id: undefined })])),
+      executeWrite(buildRec("partial", [step(1, "site-list"), step(2, "profile", { status: "unconfirmed", id: undefined, answer: UNCLEAR, readBack: "not-read", readBackNote: RAW }), step(3, "policy", { status: "planned", readBack: undefined, id: undefined })])),
     ],
     failed: [executeWrite(FAIL), executeWrite(buildRec("failed", built.steps.map((x) => ({ ...x, status: "planned", readBack: undefined, id: undefined })), { checks: [{ ok: false, level: "fail", text: "No rollback snapshot could be saved, so nothing was built.", detail: RAW }] }))],
   },
@@ -231,6 +238,7 @@ const ACTIONS = [
       allowWrite(allowEntry({ readBack: NOT_READ, answer: UNCLEAR })),
       allowWrite(allowEntry({ status: "partial", readBack: `list holds the site; profile not read: ${RAW}`, answer: UNCLEAR, error: RAW })),
       allowWrite(allowEntry({ readBack: `${NOT_READ}; profile links it as allow`, answer: UNCLEAR })),
+      allowWrite(allowEntry({ status: "unconfirmed", listId: undefined, createdList: false, readBack: NOT_READ, answer: UNCLEAR })),
     ],
     failed: [allowWrite(FAIL)],
   },
@@ -442,9 +450,10 @@ const ROWS = [
       step(8, "policy", { status: "delete-failed" }),
       step(9, "policy", { status: "planned", readBack: undefined, id: undefined }),
       step(10, "site-list", { status: "delete-failed", deleteError: `${UNCLEAR}. A read-back still found the list, so it wasn't deleted.` }),
+      step(11, "site-list", { status: "unconfirmed", id: undefined, answer: UNCLEAR, readBack: "not-read", readBackNote: RAW }),
     ], { rollback: { at: now, steps: [out("profile", "not confirmed", { id: "profile-7", error: `A read-back couldn't read it (${RAW}), so it may still be there.` }), out("policy", "failed", { id: "policy-8", error: RAW })] } })] } },
     rows: ".steps-list > li",
-    states: ["confirmed", "unconfirmed", "unconfirmed", "unconfirmed", "failed", "done", "unconfirmed", "failed", "done", "failed"],
+    states: ["confirmed", "unconfirmed", "unconfirmed", "unconfirmed", "failed", "done", "unconfirmed", "failed", "done", "failed", "unanswered"],
   },
   {
     name: "Promote: Waves moved",
@@ -483,10 +492,11 @@ const ROWS = [
       allow(12, "undo-failed", { readBack: "site listed", undoReadBack: NOT_READ, undoAnswer: UNCLEAR, error: "The list couldn't be read back, so the removal isn't confirmed." }),
       allow(13, "partial", { readBack: `list holds the site; profile not read: ${RAW}`, answer: UNCLEAR, error: RAW }),
       allow(14, "added", { readBack: `${NOT_READ}; profile links it as allow`, answer: UNCLEAR }),
+      allow(15, "unconfirmed", { listId: undefined, createdList: false, readBack: NOT_READ, answer: UNCLEAR }),
     ] } },
     rows: ".order-list > li",
     scope: "Allow entries",
-    states: ["confirmed", "confirmed", "unconfirmed", "unconfirmed", "unconfirmed", "failed", "done", "unconfirmed", "failed", "done", "unanswered", "unanswered", "unanswered", "unanswered"],
+    states: ["confirmed", "confirmed", "unconfirmed", "unconfirmed", "unconfirmed", "failed", "done", "unconfirmed", "failed", "done", "unanswered", "unanswered", "unanswered", "unanswered", "unanswered"],
   },
   {
     name: "Promote: Retired",

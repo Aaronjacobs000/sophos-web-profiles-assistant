@@ -13,9 +13,9 @@ import path from "node:path";
 import { siteListsFrom, type CleanupResult, type SiteListOut } from "../domain/cleanup.js";
 import { ReadOnlyApi, errorStatus, type TenantApi } from "../sophos/api/requester.js";
 import { createSiteList, deleteSiteList, getSiteList, listSiteLists, listSites } from "../sophos/api/web-filters.js";
-import { auditedCreate, sameSites } from "./build-service.js";
+import { auditedCreate, idsCreatedByTool, sameSites } from "./build-service.js";
 import { auditOrWarn } from "./audit-log.js";
-import { isUnclearWrite, readBack, takenNameAdvice } from "./write-check.js";
+import { UnreadAfterWriteError, isUnclearWrite, readBack, takenNameAdvice } from "./write-check.js";
 import { readText, saveFile } from "./safe-files.js";
 import { SITE_LIST_LIMIT } from "../domain/design.js";
 
@@ -24,13 +24,16 @@ export interface ListsRecord {
   scope: string;
   createdAt: string;
   /**
-   * Each list as the create left it, or the undo after it: status "created", "failed" or "planned" (not sent), then
-   * "deleted", "still there after delete", "not confirmed", "in use by a profile, left" or "delete failed". readBack is
-   * what the read-back after the last write Sophos accepted found ("matches", how it differed, or "not read: " and why).
-   * deleteAnswer is set with a delete's read-back when Sophos didn't answer that delete with a success (a 5xx, a 404, no
-   * answer in time or a dropped connection): what it said. Without it, Sophos accepted the delete.
+   * Each list as the create left it, or the undo after it: status "created", "unconfirmed", "failed" or "planned" (not
+   * sent), then "deleted", "still there after delete", "not confirmed", "in use by a profile, left" or "delete failed".
+   * readBack is what the read-back after the last write Sophos accepted found ("matches", how it differed, or "not read: "
+   * and why). deleteAnswer is set with a delete's read-back when Sophos didn't answer that delete with a success (a 5xx, a
+   * 404, no answer in time or a dropped connection): what it said. Without it, Sophos accepted the delete.
+   * unconfirmed: Sophos didn't answer the create with a success, and the tenant's site lists couldn't be read to look for
+   * it by name after (answer, and "not read: " in readBack), so it may have been made. There's no id; the next create
+   * looks for it by name first, and uses it if it's there (note).
    */
-  lists: Array<{ name: string; action: string; sites: number; id?: string; status: string; readBack?: string; deleteAnswer?: string; error?: string }>;
+  lists: Array<{ name: string; action: string; sites: number; id?: string; status: string; readBack?: string; answer?: string; note?: string; deleteAnswer?: string; error?: string }>;
 }
 
 function recordPath(dataDir: string, scope: string): string {
@@ -47,36 +50,69 @@ export interface ListsPlan {
   lists: SiteListOut[];
   problems: string[];
   leftOut: number;
+  /** Lists the last create asked for that Sophos didn't confirm (unconfirmed), found by name: used, not made again. */
+  reuse: Array<{ name: string; id: string }>;
+  notes: string[];
 }
 
-export async function planLists(api: TenantApi, tenantId: string, results: CleanupResult[], prefix: string): Promise<ListsPlan> {
+/** The note on a list the last create asked for, found by name. */
+const FOUND_NOTE = "Found by name: the last create asked for it and Sophos didn't confirm it, so it's used, not made again.";
+
+/**
+ * The dry run. With last (where this create keeps its record), a name that's taken by a list the last create asked for
+ * and Sophos didn't confirm, which no record has an id for, isn't a problem: the create uses that list (reuse).
+ */
+export async function planLists(api: TenantApi, tenantId: string, results: CleanupResult[], prefix: string, last?: { dataDir: string; scope: string }): Promise<ListsPlan> {
   const { lists, leftOut } = siteListsFrom(results, prefix);
   const existing = await listSiteLists(new ReadOnlyApi(api), tenantId);
   const problems: string[] = [];
+  const notes: string[] = [];
+  const reuse: ListsPlan["reuse"] = [];
+  const before = last ? await lastListsRecord(last.dataDir, last.scope) : null;
+  const asked = before?.tenantId === tenantId ? before.lists.filter((r) => r.status === "unconfirmed" && !r.id).map((r) => r.name.toLowerCase()) : [];
+  const recorded = asked.length ? new Set([...before!.lists.map((r) => r.id), ...(await idsCreatedByTool(last!.dataDir, tenantId))]) : new Set<string | undefined>();
+  const taken = lists.flatMap((l) => {
+    const there = existing.find((x) => x.name.toLowerCase() === l.name.toLowerCase());
+    return there ? [{ name: l.name, id: there.id }] : [];
+  });
+  for (const x of taken) if (asked.includes(x.name.toLowerCase()) && !recorded.has(x.id)) reuse.push(x);
+  const adding = lists.length - reuse.length;
   if (lists.length === 0) problems.push("There are no exceptions to put in a site list.");
-  if (existing.length + lists.length > SITE_LIST_LIMIT) problems.push(`The account has ${existing.length} of ${SITE_LIST_LIMIT} site lists; ${lists.length} more won't fit.`);
-  const taken = new Set(existing.map((l) => l.name.toLowerCase()));
-  for (const l of lists) if (taken.has(l.name.toLowerCase())) problems.push(`A site list named "${l.name}" already exists.`);
-  return { lists, problems, leftOut: leftOut.length };
+  if (existing.length + adding > SITE_LIST_LIMIT) problems.push(`The account has ${existing.length} of ${SITE_LIST_LIMIT} site lists; ${adding} more won't fit.`);
+  for (const x of taken) {
+    if (reuse.includes(x)) notes.push(`"${x.name}" is in the tenant. The last create asked for it and Sophos didn't confirm it was made, so this one uses it rather than making another.`);
+    else problems.push(`A site list named "${x.name}" already exists.`);
+  }
+  return { lists, problems, leftOut: leftOut.length, reuse, notes };
 }
 
 export async function createLists(dataDir: string, api: TenantApi, tenantId: string, scope: string, results: CleanupResult[], prefix: string): Promise<ListsRecord> {
-  const plan = await planLists(api, tenantId, results, prefix);
+  const plan = await planLists(api, tenantId, results, prefix, { dataDir, scope });
   if (plan.problems.length) throw new Error(plan.problems.join(" "));
   const record: ListsRecord = { tenantId, scope, createdAt: new Date().toISOString(), lists: [] };
   for (const l of plan.lists) {
     const row: ListsRecord["lists"][number] = { name: l.name, action: l.action, sites: l.sites.length, status: "planned" };
     record.lists.push(row);
+    const found = plan.reuse.find((r) => r.name === l.name);
     try {
-      const { value } = await auditedCreate(
-        tenantId,
-        "site-list",
-        () => createSiteList(api, tenantId, { name: l.name, description: `${l.action[0]!.toUpperCase()}${l.action.slice(1)} exceptions kept by the site list cleaner (Web Profiles Assistant, unofficial).`, sites: l.sites }),
-        async () => (await listSiteLists(new ReadOnlyApi(api), tenantId)).find((x) => x.name === l.name) ?? null,
-        "the site list",
-        { where: "the tenant's site lists", found: `no site list named "${l.name}"`, advice: takenNameAdvice(`the site list "${l.name}"`, "Undo last lists", "create the lists again") },
-        { name: l.name, sites: l.sites.length, scope },
-      );
+      if (found) {
+        // Found by name in the dry run just read: no create is sent, and the audit log says it was used.
+        row.note = FOUND_NOTE;
+        await auditOrWarn({ tenantId, action: "reuse", resource: "site-list", resourceId: found.id, ok: true, detail: { name: l.name, scope, note: FOUND_NOTE } });
+      }
+      const value = found
+        ? { id: found.id }
+        : (
+            await auditedCreate(
+              tenantId,
+              "site-list",
+              () => createSiteList(api, tenantId, { name: l.name, description: `${l.action[0]!.toUpperCase()}${l.action.slice(1)} exceptions kept by the site list cleaner (Web Profiles Assistant, unofficial).`, sites: l.sites }),
+              async () => (await listSiteLists(new ReadOnlyApi(api), tenantId)).find((x) => x.name === l.name) ?? null,
+              "the site list",
+              { where: "the tenant's site lists", found: `no site list named "${l.name}"`, advice: takenNameAdvice(`the site list "${l.name}"`, "Undo last lists", "create the lists again") },
+              { name: l.name, sites: l.sites.length, scope },
+            )
+          ).value;
       row.id = value.id;
       row.status = "created";
       // Made: a read-back that fails or differs leaves it unconfirmed, and the next list is still sent.
@@ -89,8 +125,16 @@ export async function createLists(dataDir: string, api: TenantApi, tenantId: str
       else if (sameSites(l.sites, back.value)) row.readBack = "matches";
       else row.readBack = back.value.length === l.sites.length ? "read back with other sites than were sent" : `read back ${back.value.length} ${back.value.length === 1 ? "site" : "sites"}, not the ${l.sites.length} sent`;
     } catch (err) {
-      row.status = "failed";
-      row.error = err instanceof Error ? err.message : String(err);
+      if (err instanceof UnreadAfterWriteError) {
+        // No clear answer, and the site lists couldn't be read to look for it by name: it may have been made. Not
+        // confirmed, not failed; there's no id, so the next create looks for it by name first.
+        row.status = "unconfirmed";
+        row.answer = err.answer;
+        row.readBack = `not read: ${err.unread}`;
+      } else {
+        row.status = "failed";
+        row.error = err instanceof Error ? err.message : String(err);
+      }
       break;
     }
   }

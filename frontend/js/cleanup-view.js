@@ -3,7 +3,7 @@
 // table with filters, and per-entry decisions.
 
 import { api } from "./api.js";
-import { OUTCOME_TOAST, detailHtml, esc, escAttr, readBackParts, sentence } from "./ui.js";
+import { OUTCOME_TOAST, detailHtml, esc, escAttr, readBackParts, sentence, unansweredReason } from "./ui.js";
 import { icon } from "./icons.js";
 import { toast } from "./toast.js";
 
@@ -135,29 +135,42 @@ function listReason(l) {
 
 /**
  * What a create did (category C): green only when every list was made and read back with the sites sent; amber when
- * Sophos made lists but a read-back didn't confirm one, or a later list failed; red when none was made. Which list failed
- * and that the lists after it weren't sent are in the message; what Sophos answered, and why a list isn't confirmed, on
- * the Detail line.
+ * Sophos made lists but a read-back didn't confirm one, or a later list failed, or Sophos didn't answer a create with a
+ * success and nothing could be read to look for it (unconfirmed); red when none was made. Which list failed and that the
+ * lists after it weren't sent are in the message; what Sophos answered, and why a list isn't confirmed, on the Detail
+ * line. A list found by name, which the last create asked for, is said: it was used, not made again.
  */
 function listsOutcome(rec, planned) {
   const made = rec.lists.filter((l) => l.status === "created");
   const open = made.filter((l) => l.readBack !== "matches");
   const failed = rec.lists.find((l) => l.status === "failed");
+  const unknown = rec.lists.find((l) => l.status === "unconfirmed");
+  const used = made.filter((l) => l.note);
   const lists = (k) => `${k} site ${k === 1 ? "list" : "lists"}`;
   const confirmed = !open.length ? " and read back" : open.length === made.length ? ", not confirmed on read-back" : `, ${open.length} not confirmed on read-back`;
   const reasons = open.map(listReason);
+  const usedText = used.length ? ` ${used.length === 1 ? `"${used[0].name}" was` : `${used.length} of them were`} found by name and used, not made again.` : "";
+  if (unknown) {
+    const notSent = planned - made.length - 1;
+    const rest = notSent > 0 ? `, so ${notSent === 1 ? "the list after it wasn't" : `the ${notSent} lists after it weren't`} sent` : "";
+    return {
+      state: "unconfirmed",
+      text: `${made.length ? `${made.length} of ${lists(planned)} created${confirmed}.${usedText} ` : ""}Sophos didn't say creating "${unknown.name}" went through, and the read-back didn't confirm it${rest}.`,
+      reason: [`"${unknown.name}": ${unansweredReason(unknown.answer, unknown.readBack)}`, ...reasons].join(" "),
+    };
+  }
   if (failed) {
     const notSent = planned - made.length - 1;
     const rest = notSent > 0 ? `, so ${notSent === 1 ? "the list after it wasn't" : `the ${notSent} lists after it weren't`} sent` : "";
     return {
       state: made.length ? "unconfirmed" : "failed",
-      text: `${made.length ? `${made.length} of ${lists(planned)} created${confirmed}.` : "No site lists created."} Creating "${failed.name}" failed${rest}.`,
+      text: `${made.length ? `${made.length} of ${lists(planned)} created${confirmed}.${usedText}` : "No site lists created."} Creating "${failed.name}" failed${rest}.`,
       reason: [sentence(failed.error ?? ""), ...reasons].filter(Boolean).join(" "),
     };
   }
-  if (!open.length) return { state: "confirmed", text: `${lists(made.length)} created and read back.`, reason: "" };
+  if (!open.length) return { state: "confirmed", text: `${lists(made.length)} created and read back.${usedText}`, reason: "" };
   const which = open.length === 1 ? `"${open[0].name}"` : `${open.length} of them`;
-  return { state: "unconfirmed", text: `${lists(made.length)} created, but the read-back didn't confirm ${which}.`, reason: reasons.join(" ") };
+  return { state: "unconfirmed", text: `${lists(made.length)} created, but the read-back didn't confirm ${which}.${usedText}`, reason: reasons.join(" ") };
 }
 
 /**
@@ -232,7 +245,7 @@ export function wireView(root, view, endpoints, rerender) {
         toast(plan.problems.join(" "), "warn", 10000);
         return;
       }
-      const ok = window.confirm(`Dry run passed. Create ${plan.lists.length} site ${plan.lists.length === 1 ? "list" : "lists"} (${plan.lists.map((l) => `${l.name}: ${l.sites.length}`).join(", ")})? Each is read back and recorded in the audit log, and Undo deletes them.`);
+      const ok = window.confirm(`Dry run passed. Create ${plan.lists.length} site ${plan.lists.length === 1 ? "list" : "lists"} (${plan.lists.map((l) => `${l.name}: ${l.sites.length}`).join(", ")})? Each is read back and recorded in the audit log, and Undo deletes them.${plan.notes?.length ? `\n\n${plan.notes.join("\n")}` : ""}`);
       if (!ok) return;
       const rec = await api.post(endpoints.lists, { ...endpoints.listBody, dryRun: false });
       const o = listsOutcome(rec, plan.lists.length);
