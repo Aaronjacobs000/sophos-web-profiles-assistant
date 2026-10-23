@@ -173,8 +173,9 @@ test("Pilot: an Allow whose new list Sophos answered 500, with the site lists no
     const allow = () => toastAfter(b, `${base}/pilot.html?tenant=${T}`, '[data-allow="chat.example.org"]', [click('[data-allow="chat.example.org"]'), { until: "!!document.querySelector('#allow-go')" }, click("#allow-go")]);
     assert.deepEqual(await allow(), { kind: "toast-warn", text: "Sophos didn't say the Allow for chat.example.org went through, and the read-back didn't confirm it.", detail: SAID });
     await b.open(`${base}/pilot.html?tenant=${T}`, 1440, ".order-list");
-    assert.deepEqual(await b.evaluate(ROWS("Allow entries", ".order-list > li")), [[["Not confirmed", "tag-warn"], "Sophos didn't say the Allow went through, and the read-back didn't confirm it. Allow it again: the tool looks for the list by name first.", SAID]]);
-    assert.equal(await b.evaluate(`!!document.querySelector("[data-undo]")`), false, "no id, so no Undo");
+    assert.deepEqual(await b.evaluate(ROWS("Allow entries", ".order-list > li")), [[["Not confirmed", "tag-warn"], "Sophos didn't say the Allow went through, and the read-back didn't confirm it. Allow it again or undo it: the tool looks for the list by name first.", SAID]]);
+    // From v0.3.25 Undo looks for the list by name, so the entry has one.
+    assert.equal(await b.evaluate(`!!document.querySelector("[data-undo]")`), true, "Undo, which looks for the list by name");
     // Allow it again: the dry run says it uses the list it found, and the toast says so.
     plan = rerun;
     entry = second;

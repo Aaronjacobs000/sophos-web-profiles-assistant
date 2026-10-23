@@ -5,7 +5,9 @@
  * what this created. A delete the undo couldn't confirm can be sent again
  * (category D): one answered 404 was already gone, and one answered with a
  * 5xx or no answer is read back, as in a build rollback. So can a delete
- * Sophos refused, as a rollback sends one again.
+ * Sophos refused, as a rollback sends one again. A list Sophos didn't confirm
+ * was made has no id: undo looks for it by name first, as the next create
+ * does, and deletes it by the id found.
  */
 
 import { promises as fs } from "node:fs";
@@ -13,9 +15,9 @@ import path from "node:path";
 import { siteListsFrom, type CleanupResult, type SiteListOut } from "../domain/cleanup.js";
 import { ReadOnlyApi, errorStatus, type TenantApi } from "../sophos/api/requester.js";
 import { createSiteList, deleteSiteList, getSiteList, listSiteLists, listSites } from "../sophos/api/web-filters.js";
-import { auditedCreate, idsCreatedByTool, sameSites } from "./build-service.js";
+import { auditedCreate, foundByName, idsCreatedByTool, lookUpByName, sameSites } from "./build-service.js";
 import { auditOrWarn } from "./audit-log.js";
-import { UnreadAfterWriteError, isUnclearWrite, readBack, takenNameAdvice } from "./write-check.js";
+import { UnreadAfterWriteError, isUnclearWrite, readBack, takenNameAdvice, unreadCreateFrom } from "./write-check.js";
 import { readText, saveFile } from "./safe-files.js";
 import { SITE_LIST_LIMIT } from "../domain/design.js";
 
@@ -31,9 +33,10 @@ export interface ListsRecord {
    * 404, no answer in time or a dropped connection): what it said. Without it, Sophos accepted the delete.
    * unconfirmed: Sophos didn't answer the create with a success, and the tenant's site lists couldn't be read to look for
    * it by name after (answer, and "not read: " in readBack), so it may have been made. There's no id; the next create
-   * looks for it by name first, and uses it if it's there (note).
+   * looks for it by name first, and uses it if it's there (note). So does undo: lookedUp says what it found, "found"
+   * (then deleted by its id, as status says), "not found" (status "not there") or "not read: " and why (still unconfirmed).
    */
-  lists: Array<{ name: string; action: string; sites: number; id?: string; status: string; readBack?: string; answer?: string; note?: string; deleteAnswer?: string; error?: string }>;
+  lists: Array<{ name: string; action: string; sites: number; id?: string; status: string; readBack?: string; answer?: string; note?: string; lookedUp?: string; deleteAnswer?: string; error?: string }>;
 }
 
 function recordPath(dataDir: string, scope: string): string {
@@ -43,7 +46,24 @@ function recordPath(dataDir: string, scope: string): string {
 
 export async function lastListsRecord(dataDir: string, scope: string): Promise<ListsRecord | null> {
   const text = await readText(recordPath(dataDir, scope), "cleanup").catch(() => null);
-  return text ? (JSON.parse(text) as ListsRecord) : null;
+  if (!text) return null;
+  const r = JSON.parse(text) as ListsRecord;
+  // Before v0.3.24 a create Sophos didn't answer with a success, with the site lists unread after, was saved as failed
+  // with no id: it's unconfirmed, so the next create and undo look for it by name. The file isn't changed.
+  for (const row of r.lists) {
+    const was = row.status === "failed" && !row.id ? unreadCreateFrom(row.error, "the tenant's site lists") : null;
+    if (!was) continue;
+    row.status = "unconfirmed";
+    row.answer = was.answer;
+    row.readBack = `not read: ${was.unread}`;
+    delete row.error;
+  }
+  return r;
+}
+
+/** The ids on record that a list found by name for an unconfirmed create can't be: the last create's, and every build's. */
+async function recordedIds(dataDir: string, tenantId: string, record: ListsRecord): Promise<Set<string | undefined>> {
+  return new Set([...record.lists.map((r) => r.id), ...(await idsCreatedByTool(dataDir, tenantId))]);
 }
 
 export interface ListsPlan {
@@ -70,12 +90,12 @@ export async function planLists(api: TenantApi, tenantId: string, results: Clean
   const reuse: ListsPlan["reuse"] = [];
   const before = last ? await lastListsRecord(last.dataDir, last.scope) : null;
   const asked = before?.tenantId === tenantId ? before.lists.filter((r) => r.status === "unconfirmed" && !r.id).map((r) => r.name.toLowerCase()) : [];
-  const recorded = asked.length ? new Set([...before!.lists.map((r) => r.id), ...(await idsCreatedByTool(last!.dataDir, tenantId))]) : new Set<string | undefined>();
+  const recorded = asked.length ? await recordedIds(last!.dataDir, tenantId, before!) : new Set<string | undefined>();
   const taken = lists.flatMap((l) => {
     const there = existing.find((x) => x.name.toLowerCase() === l.name.toLowerCase());
     return there ? [{ name: l.name, id: there.id }] : [];
   });
-  for (const x of taken) if (asked.includes(x.name.toLowerCase()) && !recorded.has(x.id)) reuse.push(x);
+  for (const x of taken) if (asked.includes(x.name.toLowerCase()) && foundByName(existing, x.name, recorded)) reuse.push(x);
   const adding = lists.length - reuse.length;
   if (lists.length === 0) problems.push("There are no exceptions to put in a site list.");
   if (existing.length + adding > SITE_LIST_LIMIT) problems.push(`The account has ${existing.length} of ${SITE_LIST_LIMIT} site lists; ${adding} more won't fit.`);
@@ -155,7 +175,17 @@ export async function undoLists(dataDir: string, api: TenantApi, scope: string):
   const record = await lastListsRecord(dataDir, scope);
   if (!record) throw new Error("Nothing to undo.");
   const t = record.tenantId;
-  for (const row of record.lists.filter((r) => r.id && UNDO_LISTS_RETRY.includes(r.status))) {
+  // A list Sophos didn't confirm was made has no id: it's looked for by name first, as the next create does. Found, it's
+  // deleted below by that id; not there, there's nothing to remove; not read, it stays unconfirmed for Undo again.
+  const asked = record.lists.filter((r) => r.status === "unconfirmed" && !r.id);
+  const recorded = asked.length ? await recordedIds(dataDir, t, record) : new Set<string | undefined>();
+  for (const row of asked) {
+    const look = await lookUpByName(api, t, "site-list", row.name, recorded);
+    if (look.unread !== undefined) row.lookedUp = `not read: ${look.unread}`;
+    else if (!look.found) Object.assign(row, { status: "not there", lookedUp: "not found" });
+    else Object.assign(row, { id: look.found.id, lookedUp: "found" });
+  }
+  for (const row of record.lists.filter((r) => r.id && (UNDO_LISTS_RETRY.includes(r.status) || r.status === "unconfirmed"))) {
     const entry = { tenantId: t, action: "delete", resource: "site-list", resourceId: row.id!, detail: { name: row.name, undo: scope } };
     // Set when the delete got no clear answer (a 5xx, no answer in time, or a dropped connection), which can come back for a delete that went through.
     let unclear: string | undefined;

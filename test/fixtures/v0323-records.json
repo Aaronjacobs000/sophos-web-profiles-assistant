@@ -1,0 +1,1597 @@
+{
+ "note": "Records saved by Web Profiles Assistant v0.3.23 against an in-memory tenant (test/memory-tenant.mjs), placeholder names only: a create Sophos answered 500 whose name lookup couldn't be read after (unread), one Sophos refused (refused), and one answered 500 that a read-back found wasn't made (unmade).",
+ "version": "0.3.23",
+ "build": {
+  "unread-site-list": {
+   "id": "4bf122cd-0964-4c3f-a77c-144bef478cc6",
+   "tenantId": "00000000-0000-4000-a000-000000000001",
+   "tenantName": "Example Tenant",
+   "createdAt": "2026-10-23T06:21:15.428Z",
+   "status": "failed",
+   "pilot": {
+    "profileKey": "profile-5b360b5e",
+    "enabled": false,
+    "targets": {
+     "endpoints": [
+      "w1"
+     ]
+    },
+    "name": "WF pilot: Sales profile"
+   },
+   "steps": [
+    {
+     "order": 1,
+     "kind": "site-list",
+     "key": "list-96ff44fd",
+     "name": "Sales Block",
+     "method": "POST",
+     "path": "/web-filters/v1/site-lists",
+     "summary": "1 site, block",
+     "body": {
+      "name": "Sales Block",
+      "description": "Block exceptions from Website Management, kept after clean-up. Made by the Web Profiles Assistant (unofficial) on 23/10/2026.",
+      "sites": [
+       "blocked.example.com"
+      ]
+     },
+     "status": "failed",
+     "error": "Sophos API error 500: InternalServerError. A read-back could not read the tenant's site lists (Sophos API error 503: ServiceUnavailable). The change may still have gone through: check the tenant before trying again."
+    },
+    {
+     "order": 2,
+     "kind": "profile",
+     "key": "profile-5b360b5e",
+     "name": "Sales profile",
+     "method": "POST",
+     "path": "/web-filters/v1/profiles",
+     "summary": "Custom categories, 1 site list",
+     "body": {
+      "name": "Sales profile",
+      "description": "From classic policy \"Sales\". Owner: to confirm. Reason: to confirm. Made by the Web Profiles Assistant (unofficial) on 23/10/2026.",
+      "filterByCategory": true,
+      "categoryGroupActions": [
+       {
+        "name": "bandwidth",
+        "action": "allow"
+       },
+       {
+        "name": "business",
+        "action": "allow"
+       },
+       {
+        "name": "data-loss",
+        "action": "allow"
+       },
+       {
+        "name": "infrastructure",
+        "action": "allow"
+       },
+       {
+        "name": "productivity",
+        "action": "allow"
+       },
+       {
+        "name": "social-networking",
+        "action": "allow"
+       },
+       {
+        "name": "threats",
+        "action": "block"
+       }
+      ],
+      "categoryActions": [
+       {
+        "name": "alcohol-tobacco",
+        "action": "block"
+       },
+       {
+        "name": "controlled-substances",
+        "action": "block"
+       },
+       {
+        "name": "criminal-activity",
+        "action": "block"
+       },
+       {
+        "name": "download-freeware-shareware",
+        "action": "allow"
+       },
+       {
+        "name": "extreme",
+        "action": "block"
+       },
+       {
+        "name": "intellectual-piracy",
+        "action": "block"
+       },
+       {
+        "name": "intolerance-hate",
+        "action": "block"
+       },
+       {
+        "name": "legal-highs",
+        "action": "block"
+       },
+       {
+        "name": "marijuana",
+        "action": "block"
+       },
+       {
+        "name": "militancy-extremist",
+        "action": "block"
+       },
+       {
+        "name": "nudity",
+        "action": "block"
+       },
+       {
+        "name": "plagiarism",
+        "action": "block"
+       },
+       {
+        "name": "pro-suicide-self-harm",
+        "action": "block"
+       },
+       {
+        "name": "sex-education",
+        "action": "block"
+       },
+       {
+        "name": "sexually-explicit",
+        "action": "block"
+       },
+       {
+        "name": "swimwear-lingerie",
+        "action": "block"
+       },
+       {
+        "name": "weapons",
+        "action": "block"
+       },
+       {
+        "name": "uncategorized",
+        "action": "allow"
+       }
+      ],
+      "filterBySiteList": true
+     },
+     "listActions": [
+      {
+       "listKey": "list-96ff44fd",
+       "action": "block",
+       "priority": 31
+      }
+     ],
+     "status": "planned"
+    },
+    {
+     "order": 3,
+     "kind": "policy",
+     "key": "pilot",
+     "name": "WF pilot: Sales profile",
+     "method": "POST",
+     "path": "/endpoint/v1/policies",
+     "summary": "Web Control, top of the order, disabled, logging on, Recommended file types, assigned to 1 device target",
+     "body": {
+      "name": "WF pilot: Sales profile",
+      "type": "web-control",
+      "enabled": false,
+      "priority": 1,
+      "appliesTo": {
+       "endpoints": [
+        "w1"
+       ],
+       "endpointGroups": []
+      },
+      "settings": {
+       "endpoint.web-control.web-profile.enabled": {
+        "value": true
+       },
+       "endpoint.web-control.filter-by-web-profile.enabled": {
+        "value": true
+       },
+       "endpoint.web-control.web-profile-id": {
+        "value": "<profile id>"
+       },
+       "endpoint.web-control.web-profile-log-web-events.enabled": {
+        "value": true
+       },
+       "endpoint.web-control.filetypes.archive-jar.action": {
+        "value": "block"
+       },
+       "endpoint.web-control.filetypes.exe-com.action": {
+        "value": "block"
+       },
+       "endpoint.web-control.filetypes.exe-dll.action": {
+        "value": "block"
+       },
+       "endpoint.web-control.filetypes.exe-javabytecode.action": {
+        "value": "block"
+       },
+       "endpoint.web-control.filetypes.exe-ocx.action": {
+        "value": "block"
+       },
+       "endpoint.web-control.filetypes.exe-unknown.action": {
+        "value": "block"
+       },
+       "endpoint.web-control.filetypes.exe-exe.action": {
+        "value": "warn"
+       },
+       "endpoint.web-control.filetypes.exe-msi.action": {
+        "value": "warn"
+       },
+       "endpoint.web-control.filetypes.doc-pdf.action": {
+        "value": "allow"
+       },
+       "endpoint.web-control.filetypes.video-flv.action": {
+        "value": "allow"
+       }
+      }
+     },
+     "status": "planned"
+    }
+   ],
+   "checks": [
+    {
+     "ok": true,
+     "level": "ok",
+     "text": "Profiles: 0 in the account, 1 to add, limit 20."
+    },
+    {
+     "ok": true,
+     "level": "ok",
+     "text": "Site lists: 0 in the account, 1 to add, limit 20."
+    },
+    {
+     "ok": true,
+     "level": "ok",
+     "text": "1 device found."
+    },
+    {
+     "ok": true,
+     "level": "warn",
+     "text": "The clean-up step hasn't run, so the site lists hold every entry the policy uses."
+    },
+    {
+     "ok": true,
+     "level": "warn",
+     "text": "The clean-up step hasn't run, so every Website Management entry a policy uses goes into the site lists. Run the clean-up first to keep only real exceptions."
+    },
+    {
+     "ok": true,
+     "level": "ok",
+     "text": "Write access is confirmed by the first create; a refusal stops the build before anything else is sent."
+    }
+   ],
+   "snapshotFile": "example-tenant_20261023-172115.json",
+   "finishedAt": "2026-10-23T06:21:15.455Z"
+  },
+  "unread-profile": {
+   "id": "55a0eb8b-6f33-43f7-90be-6990b6a9a4e6",
+   "tenantId": "00000000-0000-4000-a000-000000000001",
+   "tenantName": "Example Tenant",
+   "createdAt": "2026-10-23T06:21:15.461Z",
+   "status": "failed",
+   "pilot": {
+    "profileKey": "profile-5dc1729b",
+    "enabled": false,
+    "targets": {
+     "endpoints": [
+      "w1"
+     ]
+    },
+    "name": "WF pilot: Base Policy profile"
+   },
+   "steps": [
+    {
+     "order": 1,
+     "kind": "profile",
+     "key": "profile-5dc1729b",
+     "name": "Base Policy profile",
+     "method": "POST",
+     "path": "/web-filters/v1/profiles",
+     "summary": "Custom categories, 0 site lists",
+     "body": {
+      "name": "Base Policy profile",
+      "description": "From classic policy \"Base Policy\". Owner: to confirm. Reason: to confirm. Made by the Web Profiles Assistant (unofficial) on 23/10/2026.",
+      "filterByCategory": true,
+      "categoryGroupActions": [
+       {
+        "name": "bandwidth",
+        "action": "allow"
+       },
+       {
+        "name": "business",
+        "action": "allow"
+       },
+       {
+        "name": "data-loss",
+        "action": "allow"
+       },
+       {
+        "name": "infrastructure",
+        "action": "allow"
+       },
+       {
+        "name": "productivity",
+        "action": "allow"
+       },
+       {
+        "name": "social-networking",
+        "action": "allow"
+       },
+       {
+        "name": "threats",
+        "action": "block"
+       }
+      ],
+      "categoryActions": [
+       {
+        "name": "alcohol-tobacco",
+        "action": "block"
+       },
+       {
+        "name": "controlled-substances",
+        "action": "block"
+       },
+       {
+        "name": "criminal-activity",
+        "action": "block"
+       },
+       {
+        "name": "download-freeware-shareware",
+        "action": "allow"
+       },
+       {
+        "name": "extreme",
+        "action": "block"
+       },
+       {
+        "name": "intellectual-piracy",
+        "action": "block"
+       },
+       {
+        "name": "intolerance-hate",
+        "action": "block"
+       },
+       {
+        "name": "legal-highs",
+        "action": "block"
+       },
+       {
+        "name": "marijuana",
+        "action": "block"
+       },
+       {
+        "name": "militancy-extremist",
+        "action": "block"
+       },
+       {
+        "name": "nudity",
+        "action": "block"
+       },
+       {
+        "name": "plagiarism",
+        "action": "block"
+       },
+       {
+        "name": "pro-suicide-self-harm",
+        "action": "block"
+       },
+       {
+        "name": "sex-education",
+        "action": "block"
+       },
+       {
+        "name": "sexually-explicit",
+        "action": "block"
+       },
+       {
+        "name": "swimwear-lingerie",
+        "action": "block"
+       },
+       {
+        "name": "weapons",
+        "action": "block"
+       },
+       {
+        "name": "uncategorized",
+        "action": "allow"
+       }
+      ],
+      "filterBySiteList": false
+     },
+     "listActions": [],
+     "status": "failed",
+     "error": "Sophos API error 500: InternalServerError. A read-back could not read the tenant's profiles (Sophos API error 503: ServiceUnavailable). The change may still have gone through: check the tenant before trying again."
+    },
+    {
+     "order": 2,
+     "kind": "policy",
+     "key": "pilot",
+     "name": "WF pilot: Base Policy profile",
+     "method": "POST",
+     "path": "/endpoint/v1/policies",
+     "summary": "Web Control, top of the order, disabled, logging on, Recommended file types, assigned to 1 device target",
+     "body": {
+      "name": "WF pilot: Base Policy profile",
+      "type": "web-control",
+      "enabled": false,
+      "priority": 1,
+      "appliesTo": {
+       "endpoints": [
+        "w1"
+       ],
+       "endpointGroups": []
+      },
+      "settings": {
+       "endpoint.web-control.web-profile.enabled": {
+        "value": true
+       },
+       "endpoint.web-control.filter-by-web-profile.enabled": {
+        "value": true
+       },
+       "endpoint.web-control.web-profile-id": {
+        "value": "<profile id>"
+       },
+       "endpoint.web-control.web-profile-log-web-events.enabled": {
+        "value": true
+       },
+       "endpoint.web-control.filetypes.archive-jar.action": {
+        "value": "block"
+       },
+       "endpoint.web-control.filetypes.exe-com.action": {
+        "value": "block"
+       },
+       "endpoint.web-control.filetypes.exe-dll.action": {
+        "value": "block"
+       },
+       "endpoint.web-control.filetypes.exe-javabytecode.action": {
+        "value": "block"
+       },
+       "endpoint.web-control.filetypes.exe-ocx.action": {
+        "value": "block"
+       },
+       "endpoint.web-control.filetypes.exe-unknown.action": {
+        "value": "block"
+       },
+       "endpoint.web-control.filetypes.exe-exe.action": {
+        "value": "warn"
+       },
+       "endpoint.web-control.filetypes.exe-msi.action": {
+        "value": "warn"
+       },
+       "endpoint.web-control.filetypes.doc-pdf.action": {
+        "value": "allow"
+       },
+       "endpoint.web-control.filetypes.video-flv.action": {
+        "value": "allow"
+       }
+      }
+     },
+     "status": "planned"
+    }
+   ],
+   "checks": [
+    {
+     "ok": true,
+     "level": "ok",
+     "text": "Profiles: 0 in the account, 1 to add, limit 20."
+    },
+    {
+     "ok": true,
+     "level": "ok",
+     "text": "Site lists: 0 in the account, 0 to add, limit 20."
+    },
+    {
+     "ok": true,
+     "level": "ok",
+     "text": "1 device found."
+    },
+    {
+     "ok": true,
+     "level": "warn",
+     "text": "The clean-up step hasn't run, so the site lists hold every entry the policy uses."
+    },
+    {
+     "ok": true,
+     "level": "warn",
+     "text": "The clean-up step hasn't run, so every Website Management entry a policy uses goes into the site lists. Run the clean-up first to keep only real exceptions."
+    },
+    {
+     "ok": true,
+     "level": "ok",
+     "text": "Write access is confirmed by the first create; a refusal stops the build before anything else is sent."
+    }
+   ],
+   "snapshotFile": "example-tenant_20261023-172115.json",
+   "finishedAt": "2026-10-23T06:21:15.477Z"
+  },
+  "unread-policy": {
+   "id": "8cf5e73a-08aa-447d-ad55-03300895ea6c",
+   "tenantId": "00000000-0000-4000-a000-000000000001",
+   "tenantName": "Example Tenant",
+   "createdAt": "2026-10-23T06:21:15.481Z",
+   "status": "partial",
+   "pilot": {
+    "profileKey": "profile-5b360b5e",
+    "enabled": false,
+    "targets": {
+     "endpoints": [
+      "w1"
+     ]
+    },
+    "name": "WF pilot: Sales profile"
+   },
+   "steps": [
+    {
+     "order": 1,
+     "kind": "site-list",
+     "key": "list-96ff44fd",
+     "name": "Sales Block",
+     "method": "POST",
+     "path": "/web-filters/v1/site-lists",
+     "summary": "1 site, block",
+     "body": {
+      "name": "Sales Block",
+      "description": "Block exceptions from Website Management, kept after clean-up. Made by the Web Profiles Assistant (unofficial) on 23/10/2026.",
+      "sites": [
+       "blocked.example.com"
+      ]
+     },
+     "status": "created",
+     "id": "6696b51a-6e36-4938-8c5d-3f0330224db9",
+     "readBack": "matches"
+    },
+    {
+     "order": 2,
+     "kind": "profile",
+     "key": "profile-5b360b5e",
+     "name": "Sales profile",
+     "method": "POST",
+     "path": "/web-filters/v1/profiles",
+     "summary": "Custom categories, 1 site list",
+     "body": {
+      "name": "Sales profile",
+      "description": "From classic policy \"Sales\". Owner: to confirm. Reason: to confirm. Made by the Web Profiles Assistant (unofficial) on 23/10/2026.",
+      "filterByCategory": true,
+      "categoryGroupActions": [
+       {
+        "name": "bandwidth",
+        "action": "allow"
+       },
+       {
+        "name": "business",
+        "action": "allow"
+       },
+       {
+        "name": "data-loss",
+        "action": "allow"
+       },
+       {
+        "name": "infrastructure",
+        "action": "allow"
+       },
+       {
+        "name": "productivity",
+        "action": "allow"
+       },
+       {
+        "name": "social-networking",
+        "action": "allow"
+       },
+       {
+        "name": "threats",
+        "action": "block"
+       }
+      ],
+      "categoryActions": [
+       {
+        "name": "alcohol-tobacco",
+        "action": "block"
+       },
+       {
+        "name": "controlled-substances",
+        "action": "block"
+       },
+       {
+        "name": "criminal-activity",
+        "action": "block"
+       },
+       {
+        "name": "download-freeware-shareware",
+        "action": "allow"
+       },
+       {
+        "name": "extreme",
+        "action": "block"
+       },
+       {
+        "name": "intellectual-piracy",
+        "action": "block"
+       },
+       {
+        "name": "intolerance-hate",
+        "action": "block"
+       },
+       {
+        "name": "legal-highs",
+        "action": "block"
+       },
+       {
+        "name": "marijuana",
+        "action": "block"
+       },
+       {
+        "name": "militancy-extremist",
+        "action": "block"
+       },
+       {
+        "name": "nudity",
+        "action": "block"
+       },
+       {
+        "name": "plagiarism",
+        "action": "block"
+       },
+       {
+        "name": "pro-suicide-self-harm",
+        "action": "block"
+       },
+       {
+        "name": "sex-education",
+        "action": "block"
+       },
+       {
+        "name": "sexually-explicit",
+        "action": "block"
+       },
+       {
+        "name": "swimwear-lingerie",
+        "action": "block"
+       },
+       {
+        "name": "weapons",
+        "action": "block"
+       },
+       {
+        "name": "uncategorized",
+        "action": "allow"
+       }
+      ],
+      "filterBySiteList": true,
+      "siteListActions": [
+       {
+        "id": "6696b51a-6e36-4938-8c5d-3f0330224db9",
+        "action": "block",
+        "priority": 31
+       }
+      ]
+     },
+     "listActions": [
+      {
+       "listKey": "list-96ff44fd",
+       "action": "block",
+       "priority": 31
+      }
+     ],
+     "status": "created",
+     "id": "145974ca-8f32-4700-9b57-7e313146d8a3",
+     "readBack": "matches"
+    },
+    {
+     "order": 3,
+     "kind": "policy",
+     "key": "pilot",
+     "name": "WF pilot: Sales profile",
+     "method": "POST",
+     "path": "/endpoint/v1/policies",
+     "summary": "Web Control, top of the order, disabled, logging on, Recommended file types, assigned to 1 device target",
+     "body": {
+      "name": "WF pilot: Sales profile",
+      "type": "web-control",
+      "enabled": false,
+      "priority": 1,
+      "appliesTo": {
+       "endpoints": [
+        "w1"
+       ],
+       "endpointGroups": []
+      },
+      "settings": {
+       "endpoint.web-control.web-profile.enabled": {
+        "value": true
+       },
+       "endpoint.web-control.filter-by-web-profile.enabled": {
+        "value": true
+       },
+       "endpoint.web-control.web-profile-id": {
+        "value": "145974ca-8f32-4700-9b57-7e313146d8a3"
+       },
+       "endpoint.web-control.web-profile-log-web-events.enabled": {
+        "value": true
+       },
+       "endpoint.web-control.filetypes.archive-jar.action": {
+        "value": "block"
+       },
+       "endpoint.web-control.filetypes.exe-com.action": {
+        "value": "block"
+       },
+       "endpoint.web-control.filetypes.exe-dll.action": {
+        "value": "block"
+       },
+       "endpoint.web-control.filetypes.exe-javabytecode.action": {
+        "value": "block"
+       },
+       "endpoint.web-control.filetypes.exe-ocx.action": {
+        "value": "block"
+       },
+       "endpoint.web-control.filetypes.exe-unknown.action": {
+        "value": "block"
+       },
+       "endpoint.web-control.filetypes.exe-exe.action": {
+        "value": "warn"
+       },
+       "endpoint.web-control.filetypes.exe-msi.action": {
+        "value": "warn"
+       },
+       "endpoint.web-control.filetypes.doc-pdf.action": {
+        "value": "allow"
+       },
+       "endpoint.web-control.filetypes.video-flv.action": {
+        "value": "allow"
+       }
+      }
+     },
+     "status": "failed",
+     "error": "Sophos API error 500: InternalServerError. A read-back could not read the tenant's Web Control policies (Sophos API error 503: ServiceUnavailable). The change may still have gone through: check the tenant before trying again."
+    }
+   ],
+   "checks": [
+    {
+     "ok": true,
+     "level": "ok",
+     "text": "Profiles: 0 in the account, 1 to add, limit 20."
+    },
+    {
+     "ok": true,
+     "level": "ok",
+     "text": "Site lists: 0 in the account, 1 to add, limit 20."
+    },
+    {
+     "ok": true,
+     "level": "ok",
+     "text": "1 device found."
+    },
+    {
+     "ok": true,
+     "level": "warn",
+     "text": "The clean-up step hasn't run, so the site lists hold every entry the policy uses."
+    },
+    {
+     "ok": true,
+     "level": "warn",
+     "text": "The clean-up step hasn't run, so every Website Management entry a policy uses goes into the site lists. Run the clean-up first to keep only real exceptions."
+    },
+    {
+     "ok": true,
+     "level": "ok",
+     "text": "Write access is confirmed by the first create; a refusal stops the build before anything else is sent."
+    }
+   ],
+   "snapshotFile": "example-tenant_20261023-172115.json",
+   "finishedAt": "2026-10-23T06:21:15.502Z"
+  },
+  "refused-site-list": {
+   "id": "d2d32678-eeb8-4c2f-a224-b5b54a8003a4",
+   "tenantId": "00000000-0000-4000-a000-000000000001",
+   "tenantName": "Example Tenant",
+   "createdAt": "2026-10-23T06:21:15.506Z",
+   "status": "failed",
+   "pilot": {
+    "profileKey": "profile-5b360b5e",
+    "enabled": false,
+    "targets": {
+     "endpoints": [
+      "w1"
+     ]
+    },
+    "name": "WF pilot: Sales profile"
+   },
+   "steps": [
+    {
+     "order": 1,
+     "kind": "site-list",
+     "key": "list-96ff44fd",
+     "name": "Sales Block",
+     "method": "POST",
+     "path": "/web-filters/v1/site-lists",
+     "summary": "1 site, block",
+     "body": {
+      "name": "Sales Block",
+      "description": "Block exceptions from Website Management, kept after clean-up. Made by the Web Profiles Assistant (unofficial) on 23/10/2026.",
+      "sites": [
+       "blocked.example.com"
+      ]
+     },
+     "status": "failed",
+     "error": "Sophos API error 403: Forbidden"
+    },
+    {
+     "order": 2,
+     "kind": "profile",
+     "key": "profile-5b360b5e",
+     "name": "Sales profile",
+     "method": "POST",
+     "path": "/web-filters/v1/profiles",
+     "summary": "Custom categories, 1 site list",
+     "body": {
+      "name": "Sales profile",
+      "description": "From classic policy \"Sales\". Owner: to confirm. Reason: to confirm. Made by the Web Profiles Assistant (unofficial) on 23/10/2026.",
+      "filterByCategory": true,
+      "categoryGroupActions": [
+       {
+        "name": "bandwidth",
+        "action": "allow"
+       },
+       {
+        "name": "business",
+        "action": "allow"
+       },
+       {
+        "name": "data-loss",
+        "action": "allow"
+       },
+       {
+        "name": "infrastructure",
+        "action": "allow"
+       },
+       {
+        "name": "productivity",
+        "action": "allow"
+       },
+       {
+        "name": "social-networking",
+        "action": "allow"
+       },
+       {
+        "name": "threats",
+        "action": "block"
+       }
+      ],
+      "categoryActions": [
+       {
+        "name": "alcohol-tobacco",
+        "action": "block"
+       },
+       {
+        "name": "controlled-substances",
+        "action": "block"
+       },
+       {
+        "name": "criminal-activity",
+        "action": "block"
+       },
+       {
+        "name": "download-freeware-shareware",
+        "action": "allow"
+       },
+       {
+        "name": "extreme",
+        "action": "block"
+       },
+       {
+        "name": "intellectual-piracy",
+        "action": "block"
+       },
+       {
+        "name": "intolerance-hate",
+        "action": "block"
+       },
+       {
+        "name": "legal-highs",
+        "action": "block"
+       },
+       {
+        "name": "marijuana",
+        "action": "block"
+       },
+       {
+        "name": "militancy-extremist",
+        "action": "block"
+       },
+       {
+        "name": "nudity",
+        "action": "block"
+       },
+       {
+        "name": "plagiarism",
+        "action": "block"
+       },
+       {
+        "name": "pro-suicide-self-harm",
+        "action": "block"
+       },
+       {
+        "name": "sex-education",
+        "action": "block"
+       },
+       {
+        "name": "sexually-explicit",
+        "action": "block"
+       },
+       {
+        "name": "swimwear-lingerie",
+        "action": "block"
+       },
+       {
+        "name": "weapons",
+        "action": "block"
+       },
+       {
+        "name": "uncategorized",
+        "action": "allow"
+       }
+      ],
+      "filterBySiteList": true
+     },
+     "listActions": [
+      {
+       "listKey": "list-96ff44fd",
+       "action": "block",
+       "priority": 31
+      }
+     ],
+     "status": "planned"
+    },
+    {
+     "order": 3,
+     "kind": "policy",
+     "key": "pilot",
+     "name": "WF pilot: Sales profile",
+     "method": "POST",
+     "path": "/endpoint/v1/policies",
+     "summary": "Web Control, top of the order, disabled, logging on, Recommended file types, assigned to 1 device target",
+     "body": {
+      "name": "WF pilot: Sales profile",
+      "type": "web-control",
+      "enabled": false,
+      "priority": 1,
+      "appliesTo": {
+       "endpoints": [
+        "w1"
+       ],
+       "endpointGroups": []
+      },
+      "settings": {
+       "endpoint.web-control.web-profile.enabled": {
+        "value": true
+       },
+       "endpoint.web-control.filter-by-web-profile.enabled": {
+        "value": true
+       },
+       "endpoint.web-control.web-profile-id": {
+        "value": "<profile id>"
+       },
+       "endpoint.web-control.web-profile-log-web-events.enabled": {
+        "value": true
+       },
+       "endpoint.web-control.filetypes.archive-jar.action": {
+        "value": "block"
+       },
+       "endpoint.web-control.filetypes.exe-com.action": {
+        "value": "block"
+       },
+       "endpoint.web-control.filetypes.exe-dll.action": {
+        "value": "block"
+       },
+       "endpoint.web-control.filetypes.exe-javabytecode.action": {
+        "value": "block"
+       },
+       "endpoint.web-control.filetypes.exe-ocx.action": {
+        "value": "block"
+       },
+       "endpoint.web-control.filetypes.exe-unknown.action": {
+        "value": "block"
+       },
+       "endpoint.web-control.filetypes.exe-exe.action": {
+        "value": "warn"
+       },
+       "endpoint.web-control.filetypes.exe-msi.action": {
+        "value": "warn"
+       },
+       "endpoint.web-control.filetypes.doc-pdf.action": {
+        "value": "allow"
+       },
+       "endpoint.web-control.filetypes.video-flv.action": {
+        "value": "allow"
+       }
+      }
+     },
+     "status": "planned"
+    }
+   ],
+   "checks": [
+    {
+     "ok": true,
+     "level": "ok",
+     "text": "Profiles: 0 in the account, 1 to add, limit 20."
+    },
+    {
+     "ok": true,
+     "level": "ok",
+     "text": "Site lists: 0 in the account, 1 to add, limit 20."
+    },
+    {
+     "ok": true,
+     "level": "ok",
+     "text": "1 device found."
+    },
+    {
+     "ok": true,
+     "level": "warn",
+     "text": "The clean-up step hasn't run, so the site lists hold every entry the policy uses."
+    },
+    {
+     "ok": true,
+     "level": "warn",
+     "text": "The clean-up step hasn't run, so every Website Management entry a policy uses goes into the site lists. Run the clean-up first to keep only real exceptions."
+    },
+    {
+     "ok": true,
+     "level": "ok",
+     "text": "Write access is confirmed by the first create; a refusal stops the build before anything else is sent."
+    }
+   ],
+   "snapshotFile": "example-tenant_20261023-172115.json",
+   "finishedAt": "2026-10-23T06:21:15.517Z"
+  },
+  "unmade-site-list": {
+   "id": "f182cc89-d192-4278-b223-da6807b02ea0",
+   "tenantId": "00000000-0000-4000-a000-000000000001",
+   "tenantName": "Example Tenant",
+   "createdAt": "2026-10-23T06:21:15.521Z",
+   "status": "failed",
+   "pilot": {
+    "profileKey": "profile-5b360b5e",
+    "enabled": false,
+    "targets": {
+     "endpoints": [
+      "w1"
+     ]
+    },
+    "name": "WF pilot: Sales profile"
+   },
+   "steps": [
+    {
+     "order": 1,
+     "kind": "site-list",
+     "key": "list-96ff44fd",
+     "name": "Sales Block",
+     "method": "POST",
+     "path": "/web-filters/v1/site-lists",
+     "summary": "1 site, block",
+     "body": {
+      "name": "Sales Block",
+      "description": "Block exceptions from Website Management, kept after clean-up. Made by the Web Profiles Assistant (unofficial) on 23/10/2026.",
+      "sites": [
+       "blocked.example.com"
+      ]
+     },
+     "status": "failed",
+     "error": "Sophos API error 500: InternalServerError. The tool read the tenant's site lists twice and found no site list named \"Sales Block\". Sophos can take a while to show a change, so this does not prove it failed. Wait a minute or two, then look for the site list \"Sales Block\" in Sophos Fusion. If it's there, the tool has no record of it, so a rollback won't remove it: delete it there, then build again. A name that's already taken is refused."
+    },
+    {
+     "order": 2,
+     "kind": "profile",
+     "key": "profile-5b360b5e",
+     "name": "Sales profile",
+     "method": "POST",
+     "path": "/web-filters/v1/profiles",
+     "summary": "Custom categories, 1 site list",
+     "body": {
+      "name": "Sales profile",
+      "description": "From classic policy \"Sales\". Owner: to confirm. Reason: to confirm. Made by the Web Profiles Assistant (unofficial) on 23/10/2026.",
+      "filterByCategory": true,
+      "categoryGroupActions": [
+       {
+        "name": "bandwidth",
+        "action": "allow"
+       },
+       {
+        "name": "business",
+        "action": "allow"
+       },
+       {
+        "name": "data-loss",
+        "action": "allow"
+       },
+       {
+        "name": "infrastructure",
+        "action": "allow"
+       },
+       {
+        "name": "productivity",
+        "action": "allow"
+       },
+       {
+        "name": "social-networking",
+        "action": "allow"
+       },
+       {
+        "name": "threats",
+        "action": "block"
+       }
+      ],
+      "categoryActions": [
+       {
+        "name": "alcohol-tobacco",
+        "action": "block"
+       },
+       {
+        "name": "controlled-substances",
+        "action": "block"
+       },
+       {
+        "name": "criminal-activity",
+        "action": "block"
+       },
+       {
+        "name": "download-freeware-shareware",
+        "action": "allow"
+       },
+       {
+        "name": "extreme",
+        "action": "block"
+       },
+       {
+        "name": "intellectual-piracy",
+        "action": "block"
+       },
+       {
+        "name": "intolerance-hate",
+        "action": "block"
+       },
+       {
+        "name": "legal-highs",
+        "action": "block"
+       },
+       {
+        "name": "marijuana",
+        "action": "block"
+       },
+       {
+        "name": "militancy-extremist",
+        "action": "block"
+       },
+       {
+        "name": "nudity",
+        "action": "block"
+       },
+       {
+        "name": "plagiarism",
+        "action": "block"
+       },
+       {
+        "name": "pro-suicide-self-harm",
+        "action": "block"
+       },
+       {
+        "name": "sex-education",
+        "action": "block"
+       },
+       {
+        "name": "sexually-explicit",
+        "action": "block"
+       },
+       {
+        "name": "swimwear-lingerie",
+        "action": "block"
+       },
+       {
+        "name": "weapons",
+        "action": "block"
+       },
+       {
+        "name": "uncategorized",
+        "action": "allow"
+       }
+      ],
+      "filterBySiteList": true
+     },
+     "listActions": [
+      {
+       "listKey": "list-96ff44fd",
+       "action": "block",
+       "priority": 31
+      }
+     ],
+     "status": "planned"
+    },
+    {
+     "order": 3,
+     "kind": "policy",
+     "key": "pilot",
+     "name": "WF pilot: Sales profile",
+     "method": "POST",
+     "path": "/endpoint/v1/policies",
+     "summary": "Web Control, top of the order, disabled, logging on, Recommended file types, assigned to 1 device target",
+     "body": {
+      "name": "WF pilot: Sales profile",
+      "type": "web-control",
+      "enabled": false,
+      "priority": 1,
+      "appliesTo": {
+       "endpoints": [
+        "w1"
+       ],
+       "endpointGroups": []
+      },
+      "settings": {
+       "endpoint.web-control.web-profile.enabled": {
+        "value": true
+       },
+       "endpoint.web-control.filter-by-web-profile.enabled": {
+        "value": true
+       },
+       "endpoint.web-control.web-profile-id": {
+        "value": "<profile id>"
+       },
+       "endpoint.web-control.web-profile-log-web-events.enabled": {
+        "value": true
+       },
+       "endpoint.web-control.filetypes.archive-jar.action": {
+        "value": "block"
+       },
+       "endpoint.web-control.filetypes.exe-com.action": {
+        "value": "block"
+       },
+       "endpoint.web-control.filetypes.exe-dll.action": {
+        "value": "block"
+       },
+       "endpoint.web-control.filetypes.exe-javabytecode.action": {
+        "value": "block"
+       },
+       "endpoint.web-control.filetypes.exe-ocx.action": {
+        "value": "block"
+       },
+       "endpoint.web-control.filetypes.exe-unknown.action": {
+        "value": "block"
+       },
+       "endpoint.web-control.filetypes.exe-exe.action": {
+        "value": "warn"
+       },
+       "endpoint.web-control.filetypes.exe-msi.action": {
+        "value": "warn"
+       },
+       "endpoint.web-control.filetypes.doc-pdf.action": {
+        "value": "allow"
+       },
+       "endpoint.web-control.filetypes.video-flv.action": {
+        "value": "allow"
+       }
+      }
+     },
+     "status": "planned"
+    }
+   ],
+   "checks": [
+    {
+     "ok": true,
+     "level": "ok",
+     "text": "Profiles: 0 in the account, 1 to add, limit 20."
+    },
+    {
+     "ok": true,
+     "level": "ok",
+     "text": "Site lists: 0 in the account, 1 to add, limit 20."
+    },
+    {
+     "ok": true,
+     "level": "ok",
+     "text": "1 device found."
+    },
+    {
+     "ok": true,
+     "level": "warn",
+     "text": "The clean-up step hasn't run, so the site lists hold every entry the policy uses."
+    },
+    {
+     "ok": true,
+     "level": "warn",
+     "text": "The clean-up step hasn't run, so every Website Management entry a policy uses goes into the site lists. Run the clean-up first to keep only real exceptions."
+    },
+    {
+     "ok": true,
+     "level": "ok",
+     "text": "Write access is confirmed by the first create; a refusal stops the build before anything else is sent."
+    }
+   ],
+   "snapshotFile": "example-tenant_20261023-172115.json",
+   "finishedAt": "2026-10-23T06:21:15.536Z"
+  }
+ },
+ "allow": {
+  "unread": {
+   "thrown": "The Allow entry wasn't completed: Sophos API error 500: InternalServerError. A read-back could not read the tenant's site lists (Sophos API error 503: ServiceUnavailable). The change may still have gone through: check the tenant before trying again.",
+   "build": {
+    "id": "3db9125d-df0f-4030-8a0b-4cd2813e118c",
+    "tenantId": "00000000-0000-4000-a000-000000000001",
+    "tenantName": "Example Tenant",
+    "createdAt": "2026-10-23T06:21:15.539Z",
+    "status": "built",
+    "pilot": {
+     "profileKey": "profile",
+     "name": "WF pilot: Example profile",
+     "enabled": false,
+     "targets": {
+      "endpoints": [
+       "w1"
+      ]
+     }
+    },
+    "steps": [
+     {
+      "order": 1,
+      "kind": "site-list",
+      "key": "site-list",
+      "name": "Example Block",
+      "method": "POST",
+      "path": "",
+      "summary": "",
+      "body": {},
+      "status": "created",
+      "id": "1f2dc1e3-80ff-49cf-b8ee-c742e39c2b6e",
+      "readBack": "matches"
+     },
+     {
+      "order": 2,
+      "kind": "profile",
+      "key": "profile",
+      "name": "Example profile",
+      "method": "POST",
+      "path": "",
+      "summary": "",
+      "body": {},
+      "status": "created",
+      "id": "fbec0762-401a-432f-8b03-8e02c167f1fe",
+      "readBack": "matches"
+     },
+     {
+      "order": 3,
+      "kind": "policy",
+      "key": "pilot",
+      "name": "WF pilot: Example profile",
+      "method": "POST",
+      "path": "",
+      "summary": "",
+      "body": {},
+      "status": "created",
+      "id": "cd8c3c61-0416-4b1b-9272-07b64258482c",
+      "readBack": "matches"
+     }
+    ],
+    "checks": []
+   },
+   "pilot": {
+    "tenantId": "00000000-0000-4000-a000-000000000001",
+    "allows": [
+     {
+      "id": "b2989e0f-9be2-470b-a92e-d4c74df3c89f",
+      "at": "2026-10-23T06:21:15.540Z",
+      "host": "chat.example.org",
+      "site": "chat.example.org",
+      "buildId": "3db9125d-df0f-4030-8a0b-4cd2813e118c",
+      "profileId": "fbec0762-401a-432f-8b03-8e02c167f1fe",
+      "listName": "",
+      "createdList": false,
+      "status": "failed",
+      "error": "Sophos API error 500: InternalServerError. A read-back could not read the tenant's site lists (Sophos API error 503: ServiceUnavailable). The change may still have gone through: check the tenant before trying again."
+     }
+    ]
+   }
+  },
+  "refused": {
+   "thrown": "The Allow entry wasn't completed: Sophos API error 403: Forbidden",
+   "build": {
+    "id": "b0ed5b7b-4d0b-4493-961b-02d294e3e89e",
+    "tenantId": "00000000-0000-4000-a000-000000000001",
+    "tenantName": "Example Tenant",
+    "createdAt": "2026-10-23T06:21:15.548Z",
+    "status": "built",
+    "pilot": {
+     "profileKey": "profile",
+     "name": "WF pilot: Example profile",
+     "enabled": false,
+     "targets": {
+      "endpoints": [
+       "w1"
+      ]
+     }
+    },
+    "steps": [
+     {
+      "order": 1,
+      "kind": "site-list",
+      "key": "site-list",
+      "name": "Example Block",
+      "method": "POST",
+      "path": "",
+      "summary": "",
+      "body": {},
+      "status": "created",
+      "id": "1c03475d-b0b1-4914-8e65-36bbe1142403",
+      "readBack": "matches"
+     },
+     {
+      "order": 2,
+      "kind": "profile",
+      "key": "profile",
+      "name": "Example profile",
+      "method": "POST",
+      "path": "",
+      "summary": "",
+      "body": {},
+      "status": "created",
+      "id": "baa00148-7931-4d81-a8a8-8a86d7ce5c79",
+      "readBack": "matches"
+     },
+     {
+      "order": 3,
+      "kind": "policy",
+      "key": "pilot",
+      "name": "WF pilot: Example profile",
+      "method": "POST",
+      "path": "",
+      "summary": "",
+      "body": {},
+      "status": "created",
+      "id": "a1929fa3-cfd4-4ffa-b9a6-be00527102a4",
+      "readBack": "matches"
+     }
+    ],
+    "checks": []
+   },
+   "pilot": {
+    "tenantId": "00000000-0000-4000-a000-000000000001",
+    "allows": [
+     {
+      "id": "f4cf7e64-a502-4fd3-ac72-07e97fb801a3",
+      "at": "2026-10-23T06:21:15.549Z",
+      "host": "chat.example.org",
+      "site": "chat.example.org",
+      "buildId": "b0ed5b7b-4d0b-4493-961b-02d294e3e89e",
+      "profileId": "baa00148-7931-4d81-a8a8-8a86d7ce5c79",
+      "listName": "",
+      "createdList": false,
+      "status": "failed",
+      "error": "Sophos API error 403: Forbidden"
+     }
+    ]
+   }
+  },
+  "unmade": {
+   "thrown": "The Allow entry wasn't completed: Sophos API error 500: InternalServerError. The tool read the tenant's site lists twice and found no site list named \"Example pilot allows\". Sophos can take a while to show a change, so this does not prove it failed. Wait a minute or two, then look for the site list \"Example pilot allows\" in Sophos Fusion. If it's there, the tool has no record of it, so an undo won't remove it: delete it there, then allow the site again. A name that's already taken is refused.",
+   "build": {
+    "id": "3fcd5bab-d2c5-4968-8b15-88a2e7d7cb92",
+    "tenantId": "00000000-0000-4000-a000-000000000001",
+    "tenantName": "Example Tenant",
+    "createdAt": "2026-10-23T06:21:15.553Z",
+    "status": "built",
+    "pilot": {
+     "profileKey": "profile",
+     "name": "WF pilot: Example profile",
+     "enabled": false,
+     "targets": {
+      "endpoints": [
+       "w1"
+      ]
+     }
+    },
+    "steps": [
+     {
+      "order": 1,
+      "kind": "site-list",
+      "key": "site-list",
+      "name": "Example Block",
+      "method": "POST",
+      "path": "",
+      "summary": "",
+      "body": {},
+      "status": "created",
+      "id": "fd435d94-c621-4afb-a46c-8904341062b3",
+      "readBack": "matches"
+     },
+     {
+      "order": 2,
+      "kind": "profile",
+      "key": "profile",
+      "name": "Example profile",
+      "method": "POST",
+      "path": "",
+      "summary": "",
+      "body": {},
+      "status": "created",
+      "id": "f63de400-6ade-4adc-bb91-f9aae4341f0c",
+      "readBack": "matches"
+     },
+     {
+      "order": 3,
+      "kind": "policy",
+      "key": "pilot",
+      "name": "WF pilot: Example profile",
+      "method": "POST",
+      "path": "",
+      "summary": "",
+      "body": {},
+      "status": "created",
+      "id": "db71b2b6-a017-49c2-bc31-cc0ac8830d12",
+      "readBack": "matches"
+     }
+    ],
+    "checks": []
+   },
+   "pilot": {
+    "tenantId": "00000000-0000-4000-a000-000000000001",
+    "allows": [
+     {
+      "id": "0f2baa6c-a5a9-40bc-957a-e11d94f42fef",
+      "at": "2026-10-23T06:21:15.554Z",
+      "host": "chat.example.org",
+      "site": "chat.example.org",
+      "buildId": "3fcd5bab-d2c5-4968-8b15-88a2e7d7cb92",
+      "profileId": "f63de400-6ade-4adc-bb91-f9aae4341f0c",
+      "listName": "",
+      "createdList": false,
+      "status": "failed",
+      "error": "Sophos API error 500: InternalServerError. The tool read the tenant's site lists twice and found no site list named \"Example pilot allows\". Sophos can take a while to show a change, so this does not prove it failed. Wait a minute or two, then look for the site list \"Example pilot allows\" in Sophos Fusion. If it's there, the tool has no record of it, so an undo won't remove it: delete it there, then allow the site again. A name that's already taken is refused."
+     }
+    ]
+   }
+  }
+ },
+ "lists": {
+  "unread": {
+   "tenantId": "00000000-0000-4000-a000-000000000001",
+   "scope": "00000000-0000-4000-a000-000000000001",
+   "createdAt": "2026-10-23T06:21:15.561Z",
+   "lists": [
+    {
+     "name": "Example cleaned Block",
+     "action": "block",
+     "sites": 1,
+     "status": "failed",
+     "error": "Sophos API error 500: InternalServerError. A read-back could not read the tenant's site lists (Sophos API error 503: ServiceUnavailable). The change may still have gone through: check the tenant before trying again."
+    }
+   ]
+  },
+  "refused": {
+   "tenantId": "00000000-0000-4000-a000-000000000001",
+   "scope": "00000000-0000-4000-a000-000000000001",
+   "createdAt": "2026-10-23T06:21:15.568Z",
+   "lists": [
+    {
+     "name": "Example cleaned Block",
+     "action": "block",
+     "sites": 1,
+     "status": "failed",
+     "error": "Sophos API error 403: Forbidden"
+    }
+   ]
+  },
+  "unmade": {
+   "tenantId": "00000000-0000-4000-a000-000000000001",
+   "scope": "00000000-0000-4000-a000-000000000001",
+   "createdAt": "2026-10-23T06:21:15.572Z",
+   "lists": [
+    {
+     "name": "Example cleaned Block",
+     "action": "block",
+     "sites": 1,
+     "status": "failed",
+     "error": "Sophos API error 500: InternalServerError. The tool read the tenant's site lists twice and found no site list named \"Example cleaned Block\". Sophos can take a while to show a change, so this does not prove it failed. Wait a minute or two, then look for the site list \"Example cleaned Block\" in Sophos Fusion. If it's there, the tool has no record of it, so Undo last lists won't remove it: delete it there, then create the lists again. A name that's already taken is refused."
+    }
+   ]
+  }
+ }
+}

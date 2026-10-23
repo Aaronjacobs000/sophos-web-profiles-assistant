@@ -18,7 +18,9 @@
 // change, an Allow's link, and a list or entry a create made that was found
 // by name but not read back. From v0.3.24 it covers a create whose name
 // lookup couldn't be read after a 5xx: a build step, an Allow's new list and
-// a list from Create site lists.
+// a list from Create site lists. From v0.3.25 it covers a rollback, an
+// Allow's Undo and Undo last lists that couldn't read the tenant to look for
+// one by name, and the rows they leave.
 // A new action or row that reports a write's outcome belongs in this table.
 
 import { test } from "node:test";
@@ -167,6 +169,7 @@ const executeWrite = (answer) => ({ [`POST /api/build/${T}/dry-run`]: dryRec, [`
 const rollbackWrite = (answer) => ({ [`POST /api/build/${T}/${built.id}/rollback`]: (b) => (b.dryRun ? { ...built, restorePlan: [] } : answer) });
 const rolled = (s, outs, steps = built.steps.map((x) => ({ ...x, status: "deleted" }))) => buildRec(s, steps, { rollback: { at: now, steps: outs } });
 const out = (kind, s, extra) => ({ kind, name: `Example ${kind}`, id: `${kind}-1`, status: s, ...extra });
+const LOOK_UNREAD = `The tool couldn't read the tenant's site lists to look for it by name (${RAW}), so it may be in the tenant.`;
 
 const ACTIONS = [
   {
@@ -197,7 +200,11 @@ const ACTIONS = [
       rollbackWrite(rolled("rollback-partial", [out("policy", "deleted, 404 on read-back"), out("profile", "failed", { error: RAW })])),
       rollbackWrite(rolled("rollback-partial", [out("policy", "deleted, 404 on read-back"), { kind: "website-management", name: "Website Management read back", status: "not confirmed", error: "Website Management didn't read back as the snapshot has it." }])),
     ],
-    unanswered: [rollbackWrite(rolled("rollback-partial", [out("policy", "deleted, 404 on read-back"), { kind: "website-management", name: "create blocked.example.com", status: "not confirmed", answer: UNCLEAR, error: `${UNCLEAR}. A read-back couldn't read Website Management (${RAW}), so the change isn't confirmed.` }]))],
+    unanswered: [
+      rollbackWrite(rolled("rollback-partial", [out("policy", "deleted, 404 on read-back"), { kind: "website-management", name: "create blocked.example.com", status: "not confirmed", answer: UNCLEAR, error: `${UNCLEAR}. A read-back couldn't read Website Management (${RAW}), so the change isn't confirmed.` }])),
+      // A step Sophos didn't confirm was made, which the rollback couldn't read the tenant to look for by name.
+      rollbackWrite(rolled("rollback-partial", [out("policy", "deleted, 404 on read-back"), { kind: "site-list", name: "Example site-list 1", status: "not confirmed", lookedUp: "not read", error: LOOK_UNREAD }], [step(1, "site-list", { status: "unconfirmed", id: undefined, answer: UNCLEAR, readBack: "not-read", readBackNote: RAW }), step(2, "policy", { status: "deleted" })])),
+    ],
     failed: [rollbackWrite(rolled("rollback-partial", [out("policy", "failed", { error: RAW }), out("profile", "failed", { error: RAW })], built.steps.map((x) => ({ ...x, status: "delete-failed" })))), rollbackWrite(FAIL)],
   },
   createLists(T),
@@ -209,6 +216,8 @@ const ACTIONS = [
     steps: [click("#undo-lists")],
     confirmed: undoWrite([gone(0), gone(1)]),
     unconfirmed: [undoWrite([gone(0), listRow(1, { status: "not confirmed", readBack: NOT_READ })]), undoWrite([gone(0), listRow(1, { status: "still there after delete", readBack: "still there" })]), undoWrite([gone(0), listRow(1, { status: "delete failed", error: RAW })])],
+    // A list Sophos didn't confirm was made, which the undo couldn't read the site lists to look for by name.
+    unanswered: [undoWrite([gone(0), { name: LISTS[1], action: "warn", sites: 1, status: "unconfirmed", answer: UNCLEAR, readBack: NOT_READ, lookedUp: NOT_READ }])],
     failed: [undoWrite([listRow(0, { status: "delete failed", error: RAW }), listRow(1, { status: "in use by a profile, left", error: RAW })]), undoWrite(FAIL)],
   },
   {
@@ -249,7 +258,12 @@ const ACTIONS = [
     steps: [click("[data-undo]")],
     confirmed: undoAllowWrite(allow(1, "undone", { undo: ["Site removed, confirmed on read-back."] })),
     unconfirmed: [undoAllowWrite(allow(1, "undo-failed", { undoReadBack: NOT_READ, error: "The list couldn't be read back, so the removal isn't confirmed.", undo: ["The list couldn't be read back, so the removal isn't confirmed."] })), undoAllowWrite(allow(1, "undone", { undo: ["The profile couldn't be read back, so the unlink isn't confirmed.", "List deleted, 404 on read-back."] }))],
-    unanswered: [undoAllowWrite(allow(1, "undo-failed", { undoReadBack: NOT_READ, undoAnswer: UNCLEAR, error: "The list couldn't be read back, so the removal isn't confirmed.", undo: ["The list couldn't be read back, so the removal isn't confirmed."] })), undoAllowWrite(allow(1, "undone", { undoAnswer: UNCLEAR, undo: ["The profile couldn't be read back, so the unlink isn't confirmed.", "List deleted, 404 on read-back."] }))],
+    unanswered: [
+      undoAllowWrite(allow(1, "undo-failed", { undoReadBack: NOT_READ, undoAnswer: UNCLEAR, error: "The list couldn't be read back, so the removal isn't confirmed.", undo: ["The list couldn't be read back, so the removal isn't confirmed."] })),
+      undoAllowWrite(allow(1, "undone", { undoAnswer: UNCLEAR, undo: ["The profile couldn't be read back, so the unlink isn't confirmed.", "List deleted, 404 on read-back."] })),
+      // An Allow whose new list Sophos didn't confirm, which Undo couldn't read the site lists to look for by name.
+      undoAllowWrite(allow(1, "unconfirmed", { listId: undefined, createdList: false, readBack: NOT_READ, answer: UNCLEAR, undoLookUp: NOT_READ, undo: [LOOK_UNREAD] })),
+    ],
     failed: [undoAllowWrite(allow(1, "undo-failed", { error: RAW, undo: [] })), undoAllowWrite(FAIL)],
   },
   {
@@ -451,9 +465,12 @@ const ROWS = [
       step(9, "policy", { status: "planned", readBack: undefined, id: undefined }),
       step(10, "site-list", { status: "delete-failed", deleteError: `${UNCLEAR}. A read-back still found the list, so it wasn't deleted.` }),
       step(11, "site-list", { status: "unconfirmed", id: undefined, answer: UNCLEAR, readBack: "not-read", readBackNote: RAW }),
-    ], { rollback: { at: now, steps: [out("profile", "not confirmed", { id: "profile-7", error: `A read-back couldn't read it (${RAW}), so it may still be there.` }), out("policy", "failed", { id: "policy-8", error: RAW })] } })] } },
+      // Looked for by name by a rollback: nothing there, then one the rollback couldn't read the tenant to look for.
+      step(12, "site-list", { status: "not-found", id: undefined, answer: UNCLEAR, readBack: "not-read", readBackNote: RAW }),
+      step(13, "site-list", { status: "unconfirmed", id: undefined, answer: UNCLEAR, readBack: "not-read", readBackNote: RAW }),
+    ], { rollback: { at: now, steps: [out("profile", "not confirmed", { id: "profile-7", error: `A read-back couldn't read it (${RAW}), so it may still be there.` }), out("policy", "failed", { id: "policy-8", error: RAW }), { kind: "site-list", name: "Example site-list 12", status: "not there", lookedUp: "not found" }, { kind: "site-list", name: "Example site-list 13", status: "not confirmed", lookedUp: "not read", error: LOOK_UNREAD }] } })] } },
     rows: ".steps-list > li",
-    states: ["confirmed", "unconfirmed", "unconfirmed", "unconfirmed", "failed", "done", "unconfirmed", "failed", "done", "failed", "unanswered"],
+    states: ["confirmed", "unconfirmed", "unconfirmed", "unconfirmed", "failed", "done", "unconfirmed", "failed", "done", "failed", "unanswered", "done", "unanswered"],
   },
   {
     name: "Promote: Waves moved",
@@ -493,10 +510,12 @@ const ROWS = [
       allow(13, "partial", { readBack: `list holds the site; profile not read: ${RAW}`, answer: UNCLEAR, error: RAW }),
       allow(14, "added", { readBack: `${NOT_READ}; profile links it as allow`, answer: UNCLEAR }),
       allow(15, "unconfirmed", { listId: undefined, createdList: false, readBack: NOT_READ, answer: UNCLEAR }),
+      allow(16, "unconfirmed", { listId: undefined, createdList: false, readBack: NOT_READ, answer: UNCLEAR, undoLookUp: NOT_READ }),
+      allow(17, "undone", { listId: undefined, createdList: false, readBack: NOT_READ, answer: UNCLEAR, undo: ["No list by that name in the tenant, so there was nothing to remove."] }),
     ] } },
     rows: ".order-list > li",
     scope: "Allow entries",
-    states: ["confirmed", "confirmed", "unconfirmed", "unconfirmed", "unconfirmed", "failed", "done", "unconfirmed", "failed", "done", "unanswered", "unanswered", "unanswered", "unanswered", "unanswered"],
+    states: ["confirmed", "confirmed", "unconfirmed", "unconfirmed", "unconfirmed", "failed", "done", "unconfirmed", "failed", "done", "unanswered", "unanswered", "unanswered", "unanswered", "unanswered", "unanswered", "done"],
   },
   {
     name: "Promote: Retired",

@@ -27,7 +27,9 @@ const READ_BACK = { matches: "matches", differs: "differs", "not-read": "not rea
  * create with a success and nothing could be read to look for it; red when it failed. A delete Sophos didn't answer with
  * a success (a 5xx, a 404, or no answer) wasn't accepted, and the line says so. How it differed, or why it couldn't be
  * read, goes on the Detail line. A delete not confirmed says Roll back again only when a rollback has run for the step;
- * otherwise it's from an Allow undo, which is sent again from the Pilot page.
+ * otherwise it's from an Allow undo, which is sent again from the Pilot page. A step Sophos didn't confirm was made says
+ * what a rollback did when it looked for it by name: deleted it (Rolled back), found nothing (Nothing to remove, muted),
+ * or couldn't read the tenant (amber).
  */
 function stepState(s, rec) {
   const tag = (cls, label) => `<span class="tag ${cls}">${label}</span>`;
@@ -44,9 +46,15 @@ function stepState(s, rec) {
         note: s.readBack === "differs" ? "Sophos made it, but it didn't read back as sent." : s.readBack === "not-read" ? "Sophos made it, but the tool couldn't read it back, so it isn't confirmed." : "Sophos made it, but it isn't confirmed.",
         detail: s.readBackNote ?? (s.readBack ? "" : "No read-back on record."),
       };
-    case "unconfirmed":
+    case "unconfirmed": {
       // Sophos didn't answer the create with a success, and nothing could be read to look for it by name: it may be there.
-      return { tag: tag(OUTCOME_TAG.unconfirmed, "Not confirmed"), note: UNCONFIRMED_NOTE, detail: unansweredReason(s.answer, `not read: ${s.readBackNote ?? ""}`) };
+      // A rollback looks for it by name: one that couldn't read the tenant says so, and one from before v0.3.25 didn't look.
+      const looked = rec.rollback?.steps.find((o) => o.lookedUp === "not read" && o.kind === s.kind && o.name === s.name);
+      if (looked) return { tag: tag(OUTCOME_TAG.unconfirmed, "Not confirmed"), note: LOOKUP_UNREAD_NOTE, detail: `${sentence(s.answer)} ${sentence(looked.error)}`.trim() };
+      return { tag: tag(OUTCOME_TAG.unconfirmed, "Not confirmed"), note: rec.rollback ? NOT_LOOKED_NOTE : UNCONFIRMED_NOTE, detail: unansweredReason(s.answer, `not read: ${s.readBackNote ?? ""}`) };
+    }
+    case "not-found":
+      return { tag: tag("tag-muted", "Nothing to remove"), note: NOT_FOUND_NOTE };
     case "failed":
       return { tag: tag(OUTCOME_TAG.failed, "Failed"), note: s.error ? "This step failed, so the build stopped here." : "", detail: s.error };
     case "deleted":
@@ -67,6 +75,10 @@ function stepState(s, rec) {
 
 // A create Sophos didn't answer with a success, with nothing read after to look for it: it may be in the tenant.
 const UNCONFIRMED_NOTE = "Sophos didn't say it was made, and the read-back didn't confirm it. The next build looks for it by name first and uses it if it's there.";
+// What a rollback did with one: couldn't read the tenant to look for it, didn't look (before v0.3.25), or found nothing.
+const LOOKUP_UNREAD_NOTE = "Sophos didn't say it was made, and the rollback couldn't look for it by name, so it may be in the tenant. Roll back again, or check for it in Sophos Fusion.";
+const NOT_LOOKED_NOTE = "Sophos didn't say it was made, and the last rollback didn't look for it. Roll back again: it looks for it by name and deletes it if it's there.";
+const NOT_FOUND_NOTE = "Sophos didn't say it was made, and the rollback found nothing by that name, so there was nothing to remove.";
 
 /** What a step's read-back didn't confirm, for the Detail line of a message. */
 function stepReason(s) {
@@ -98,22 +110,42 @@ function buildOutcome(rec) {
  * A rollback's outcome (category C): green only when every object read back gone and Website Management read back as
  * the snapshot has it; amber when Sophos accepted part or all of it, or didn't answer a delete with a success, but a
  * read-back didn't confirm it; red when nothing it sent went through. It says Sophos accepted the rollback only when
- * Sophos answered every delete the read-back didn't confirm with a success. The reason goes on the Detail line.
+ * Sophos answered every delete the read-back didn't confirm with a success. The reason goes on the Detail line. A step
+ * Sophos didn't confirm was made is looked for by name: the message says what was found and deleted, or wasn't there,
+ * and it's amber when the tenant couldn't be read to look, since that confirms neither.
  */
 function rollbackOutcome(rec) {
-  if (rec.status === "rolled-back") return { state: "confirmed", text: `${buildHeadline(rec)}.`, reason: "" };
   const steps = rec.rollback?.steps ?? [];
+  // A step Sophos didn't confirm was made (no id) is looked for by name: what the rollback found, or that it couldn't look.
+  const looked = lookedUpText(steps);
+  if (rec.status === "rolled-back") return { state: "confirmed", text: `${buildHeadline(rec)}.${looked}`, reason: "" };
   const failed = steps.find((o) => o.status === "failed");
-  const opens = steps.filter((o) => o.status === "not confirmed" || o.status === "still there after delete");
+  const unread = steps.filter((o) => o.lookedUp === "not read");
+  const opens = steps.filter((o) => (o.status === "not confirmed" || o.status === "still there after delete") && o.lookedUp !== "not read");
   const open = opens[0];
   const why = (o) => `${o.name}: ${sentence(o.error ?? "It was still there after the delete.")}`;
+  if (!failed && unread.length) {
+    const kind = (KIND[unread[0].kind] ?? "object").toLowerCase();
+    const text = unread.length === 1
+      ? `The rollback couldn't confirm whether the ${kind} "${unread[0].name}" is in the tenant: Sophos didn't confirm it was made, and the rollback couldn't look for it by name. Check for it in Sophos Fusion, or roll back again.`
+      : `The rollback couldn't confirm whether ${unread.length} objects Sophos didn't confirm were made are in the tenant: it couldn't look for them by name. Check for them in Sophos Fusion, or roll back again.`;
+    return { state: "unconfirmed", text: `${text}${opens.length ? " The read-back didn't confirm all of the rest either." : ""}${looked}`, reason: [...unread, ...opens].map(why).join(" ") };
+  }
   // A delete Sophos answered with a 5xx or a 404, or not at all, wasn't accepted (its step keeps what Sophos said), nor was a Website Management change it gave no success to (answer).
   const unansweredOpens = opens.filter((o) => o.answer || (o.id && rec.steps.some((s) => s.id === o.id && s.deleteAnswer)));
   const unanswered = unansweredOpens.length;
   const what = unansweredOpens.every((o) => o.kind !== "website-management") ? "delete" : "change";
-  if (!failed && open && unanswered) return { state: "unconfirmed", text: `The rollback isn't confirmed: Sophos didn't say ${unanswered === 1 ? `a ${what}` : `${unanswered} ${what}s`} went through, and the read-back didn't confirm ${unanswered === 1 ? "it" : "them"}.`, reason: why(open) };
-  if (!failed && open) return { state: "unconfirmed", text: "Sophos accepted the rollback, but the read-back didn't confirm all of it.", reason: why(open) };
-  return { state: steps.some((o) => o.status !== "failed") ? "unconfirmed" : "failed", text: `${buildHeadline(rec)}.`, reason: failed ? why(failed) : open ? why(open) : "" };
+  if (!failed && open && unanswered) return { state: "unconfirmed", text: `The rollback isn't confirmed: Sophos didn't say ${unanswered === 1 ? `a ${what}` : `${unanswered} ${what}s`} went through, and the read-back didn't confirm ${unanswered === 1 ? "it" : "them"}.${looked}`, reason: why(open) };
+  if (!failed && open) return { state: "unconfirmed", text: `Sophos accepted the rollback, but the read-back didn't confirm all of it.${looked}`, reason: why(open) };
+  return { state: steps.some((o) => o.status !== "failed") ? "unconfirmed" : "failed", text: `${buildHeadline(rec)}.${looked}`, reason: [failed ?? open, ...unread].filter(Boolean).map(why).join(" ") };
+}
+
+/** What a rollback did with each step it looked for by name and settled: found and deleted, or not in the tenant. */
+function lookedUpText(steps) {
+  return steps
+    .filter((o) => (o.lookedUp === "found" && o.status.startsWith("deleted")) || o.lookedUp === "not found")
+    .map((o) => ` The ${(KIND[o.kind] ?? "object").toLowerCase()} "${o.name}", which Sophos didn't confirm was made, ${o.lookedUp === "found" ? "was found by name and deleted" : "isn't in the tenant, so there was nothing to remove"}.`)
+    .join("");
 }
 
 /** Says what a build or rollback did, and that the list of builds couldn't be read after it when that failed: amber at best, with both reasons. */
@@ -251,8 +283,11 @@ function render() {
       try {
         const plan = await api.post(`/api/build/${t}/${b.dataset.rollback}/rollback`, { dryRun: true });
         const objs = plan.steps.filter((s) => s.id && s.status !== "deleted");
+        // Steps Sophos didn't confirm were made have no id: the rollback looks for them by name.
+        const asked = plan.steps.filter((s) => s.status === "unconfirmed" && !s.id);
         const wm = plan.restorePlan?.length ?? 0;
-        if (!window.confirm(`Roll back: delete ${objs.map((s) => `${s.kind} "${s.name}"`).join(", ")} in that order${wm ? `, and ${wm} Website Management changes from the snapshot` : ""}?${plan.restoreRefused ? `\n\n${plan.restoreRefused}` : ""}`)) return;
+        const does = [...(objs.length || !asked.length ? [`delete ${objs.map((s) => `${s.kind} "${s.name}"`).join(", ")} in that order`] : []), ...(asked.length ? [`look for ${asked.map((s) => `${s.kind} "${s.name}"`).join(", ")} by name, which Sophos didn't confirm ${asked.length === 1 ? "was" : "were"} made, and delete ${asked.length === 1 ? "it" : "them"} if there`] : [])];
+        if (!window.confirm(`Roll back: ${does.join(", and ")}${wm ? `, and ${wm} Website Management changes from the snapshot` : ""}?${plan.restoreRefused ? `\n\n${plan.restoreRefused}` : ""}`)) return;
         lastPlan = await api.post(`/api/build/${t}/${b.dataset.rollback}/rollback`, { dryRun: false });
       } catch (err) {
         toast("Couldn't roll back the build.", OUTCOME_TOAST.failed, 10000, err.message);

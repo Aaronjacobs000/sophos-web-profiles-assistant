@@ -23,7 +23,8 @@ const when = (iso) => (iso ? new Date(iso).toLocaleString("en-GB", { day: "2-dig
  * Allow or its undo, or didn't answer it with a success (a 5xx, or no answer), but the read-back didn't confirm it; red
  * when it failed. The plain line goes under the site, and why on the Detail line, what Sophos said first when it didn't
  * answer with a success. An entry undone has nothing to fix, so an error left from an earlier undo that failed isn't
- * shown.
+ * shown. An entry whose new list Sophos didn't confirm can be undone: Undo looks for the list by name first, and the
+ * row says when it couldn't read the site lists to look.
  */
 function allowRow(a) {
   const tag = (cls, label) => `<span class="tag ${cls}">${label}</span>`;
@@ -44,7 +45,9 @@ function allowRow(a) {
       return { tag: tag(OUTCOME_TAG.unconfirmed, "Not finished"), note: PARTIAL_NOTE, detail: withError };
     case "unconfirmed":
       // Sophos didn't answer the new list's create with a success, and nothing could be read to look for it: it may be there.
-      return { tag: tag(OUTCOME_TAG.unconfirmed, "Not confirmed"), note: "Sophos didn't say the Allow went through, and the read-back didn't confirm it. Allow it again: the tool looks for the list by name first.", detail: unansweredReason(a.answer, a.readBack) };
+      // Undo looks for the list by name too; one that couldn't read the site lists says so.
+      if (a.undoLookUp) return { tag: tag(OUTCOME_TAG.unconfirmed, "Not confirmed"), note: "Sophos didn't say the Allow went through, and Undo couldn't look for its list by name, so it may be in the tenant. Undo again, or check the site lists in Sophos Fusion.", detail: `${sentence(a.answer ?? "")} Looked up by name: ${sentence(readBackParts(a.undoLookUp).detail)}`.trim() };
+      return { tag: tag(OUTCOME_TAG.unconfirmed, "Not confirmed"), note: "Sophos didn't say the Allow went through, and the read-back didn't confirm it. Allow it again or undo it: the tool looks for the list by name first.", detail: unansweredReason(a.answer, a.readBack) };
     case "failed":
       return { tag: tag(OUTCOME_TAG.failed, "Failed"), note: "The Allow didn't finish.", detail: withError };
     case "undone":
@@ -117,7 +120,7 @@ function allowsCard() {
       const detail = sentence(row.detail ?? "");
       // An Allow that failed before it had a list has no list name, so the sub-line starts with the date.
       const sub = [esc(a.listName || ""), when(a.at), esc(back.plain)].filter(Boolean).join(" · ");
-      const undo = !(["added", "partial"].includes(a.status) && a.buildStatus === "rolled-back") && ["added", "partial", "undo-failed"].includes(a.status);
+      const undo = !(["added", "partial"].includes(a.status) && a.buildStatus === "rolled-back") && ["added", "partial", "undo-failed", "unconfirmed"].includes(a.status);
       return `<li><span class="o-name">${esc(a.site)}<span class="o-kind">${sub}</span>${row.note ? `<span class="o-note">${row.note}</span>` : ""}${detail ? `<span class="o-detail" data-allow-detail>Detail: ${esc(detail)}</span>` : ""}</span><span class="o-meta">${row.tag}${undo ? ` <button class="btn btn-small" data-undo="${escAttr(a.id)}">Undo</button>` : ""}</span></li>`;
     })
     .join("");
@@ -150,8 +153,8 @@ const unreadParts = (plain) => {
   const profile = /(^|; )profile not read$/.test(plain);
   return list && profile ? "the list and the profile" : profile ? "the profile" : "the list";
 };
-// What an undo's notes say when its read-backs confirm it.
-const UNDO_CONFIRMED = new Set(["Profile read back without the list.", "List deleted, 404 on read-back.", "Site removed, confirmed on read-back."]);
+// What an undo's notes say when its read-backs confirm it, or, for a list Sophos didn't confirm was made, its lookup by name does.
+const UNDO_CONFIRMED = new Set(["Profile read back without the list.", "List deleted, 404 on read-back.", "Site removed, confirmed on read-back.", "The list was found by name.", "No list by that name in the tenant, so there was nothing to remove."]);
 
 // A Collect now that failed, whether the request was refused or the collection itself failed; the toast's detail line says why.
 const COLLECT_FAILED = "Couldn't collect events.";
@@ -408,7 +411,7 @@ function wire() {
   main.querySelectorAll("[data-undo]").forEach((b) =>
     b.addEventListener("click", async () => {
       const a = view.allows.find((x) => x.id === b.dataset.undo);
-      if (!window.confirm(`Undo the Allow for ${a?.site}?`)) return;
+      if (!window.confirm(`Undo the Allow for ${a?.site}?${a?.status === "unconfirmed" ? " Sophos didn't confirm its list was made, so the tool looks for it by name first." : ""}`)) return;
       b.disabled = true;
       try {
         const r = await api.post(`/api/pilot/${t}/allow/${encodeURIComponent(b.dataset.undo)}/undo`, {});
@@ -419,6 +422,8 @@ function wire() {
         if (r.status === "undone" && notes.length && notes.every((x) => UNDO_CONFIRMED.has(x))) toast(`Undone. ${notes.join(" ")}`, OUTCOME_TOAST.confirmed, 9000);
         else if ((r.status === "undone" || r.undoReadBack) && r.undoAnswer) toast(`Sophos didn't say the undo for ${a?.site} went through, and the read-back didn't confirm it.`, OUTCOME_TOAST.unconfirmed, 10000, unansweredReason(r.undoAnswer, r.undoReadBack, unconfirmedNotes || r.error));
         else if (r.status === "undone" || r.undoReadBack) toast(`Sophos accepted the undo for ${a?.site}, but the read-back didn't confirm it.`, OUTCOME_TOAST.unconfirmed, 10000, unconfirmedReason(r.undoReadBack, unconfirmedNotes || r.error));
+        // Its list Sophos didn't confirm was made, and the site lists couldn't be read to look for it: it may or may not be there.
+        else if (r.status === "unconfirmed" && r.undoLookUp) toast(`Couldn't confirm whether the list for ${a?.site} is in the tenant: Sophos didn't confirm it was made, and Undo couldn't look for it by name. Check the site lists in Sophos Fusion, or undo again.`, OUTCOME_TOAST.unconfirmed, 10000, readBackParts(r.undoLookUp).detail);
         else toast(`Couldn't undo the Allow for ${a?.site}.`, OUTCOME_TOAST.failed, 9000, r.error);
       } catch (err) {
         toast(`Couldn't undo the Allow for ${a?.site}.`, OUTCOME_TOAST.failed, 9000, err.message);
