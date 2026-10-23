@@ -12,6 +12,8 @@
  *             A create Sophos gave no clear answer to, with nothing read
  *             after to look for it, is kept as unconfirmed; the next dry
  *             run looks for it by name, and the build uses it if it's there.
+ *             So is a create still in flight when the server stopped: each
+ *             step is marked as sending, and saved, before its create goes.
  *   rollback  deletes what the build created in reverse order (policy, then
  *             profiles, then site lists; the API refuses to delete a profile
  *             or list still in use), verifies each 404, and puts Website
@@ -98,15 +100,20 @@ export interface BuildStep {
   body: Record<string, unknown>;
   /**
    * unconfirmed: Sophos didn't answer the create with a success (a 5xx, no answer in time or a dropped connection), and
-   * the tenant couldn't be read to look for it by name after, so it may have been made. There's no id; answer says what
-   * Sophos said, and readBackNote why nothing was read. The next build looks for it by name first (found), and so does
-   * a rollback. not-found: an unconfirmed step a rollback looked for by name and didn't find, so there was nothing to
-   * remove.
+   * the tenant couldn't be read to look for it by name after, so it may have been made; or the server stopped while it
+   * was in flight (sending). There's no id; answer says what Sophos said, and readBackNote why nothing was read. The
+   * next build looks for it by name first (found), and so does a rollback. not-found: an unconfirmed step a rollback
+   * looked for by name and didn't find, so there was nothing to remove.
    */
   status: "planned" | "created" | "unconfirmed" | "failed" | "skipped" | "deleted" | "delete-failed" | "not-found";
   id?: string;
   /** Set on an unconfirmed step: what Sophos said to its create. */
   answer?: string;
+  /**
+   * Set, and saved, just before the step's create is sent, and cleared once its outcome is recorded. A step saved with
+   * it and still planned was in flight when the server stopped, so it may have been made: it's read as unconfirmed.
+   */
+  sending?: boolean;
   /**
    * Set by a dry run on a step whose name is taken by an object an earlier build's unconfirmed step of the same kind and
    * name asked for, which no build has an id for: its id, and that build. The build uses it rather than making another.
@@ -204,15 +211,27 @@ export async function getBuild(dataDir: string, tenantId: string, id: string): P
 /** What each kind's name lookup reads, in the words a create's error uses. */
 const LOOKUP_WHERE: Record<StepKind, string> = { "site-list": "the tenant's site lists", profile: "the tenant's profiles", policy: "the tenant's Web Control policies" };
 
+/** What an unconfirmed step that was in flight when the server stopped says Sophos answered, and why nothing was read. */
+const IN_FLIGHT = { answer: "The tool stopped before it saved what Sophos answered", unread: "none was saved" };
+
 /**
  * A build record as saved, read the way v0.3.25 sees it. Before v0.3.24 a create Sophos didn't answer with a success,
  * whose name lookup couldn't be read after, was saved as failed with no id: it's unconfirmed, with what Sophos said and
  * why nothing was read, so the next build and a rollback look for it by name, and the build it stopped didn't fail.
  * Before v0.3.25 a rollback skipped an unconfirmed step: a build with one left isn't rolled back, so it can be again.
+ * A step whose create was in flight when the server stopped (sending) is unconfirmed too: Sophos may have made it.
  * The file isn't changed.
  */
 function asRead(r: BuildRecord): BuildRecord {
   for (const s of r.steps) {
+    if (s.status === "planned" && s.sending && !s.id) {
+      s.status = "unconfirmed";
+      s.answer = IN_FLIGHT.answer;
+      s.readBack = "not-read";
+      s.readBackNote = IN_FLIGHT.unread;
+      delete s.sending;
+      continue;
+    }
     const was = s.status === "failed" && !s.id ? unreadCreateFrom(s.error, LOOKUP_WHERE[s.kind]) : null;
     if (!was) continue;
     s.status = "unconfirmed";
@@ -526,10 +545,17 @@ export async function execute(
     await auditOrWarn({ tenantId: t, action: "reuse", resource: step.kind, resourceId: step.found.id, ok: true, detail: { name: step.name, buildId: record.id, askedBy: step.found.build, note: FOUND_NOTE } });
     return { value: { id: step.found.id }, note: step.note };
   };
+  /** Marks a create about to be sent, and saves the record before it goes, so a server that stops before its outcome is recorded leaves it as sent (asRead). */
+  const sending = async (step: BuildStep): Promise<void> => {
+    if (step.found) return;
+    step.sending = true;
+    await saveRecord(dataDir, record);
+  };
   try {
     for (const step of record.steps) {
       if (step.kind === "site-list") {
         const body = step.body as { name: string; description?: string; sites: string[] };
+        await sending(step);
         const { value, note } = step.found
           ? await use({ ...step, found: step.found })
           : await auditedCreate(
@@ -566,6 +592,7 @@ export async function execute(
           });
         }
         step.body = body;
+        await sending(step);
         const { value, note } = step.found
           ? await use({ ...step, found: step.found })
           : await auditedCreate(
@@ -600,6 +627,7 @@ export async function execute(
         if (!profileId) throw new Error("No profile was created, so the pilot policy wasn't sent.");
         const body = pilotPolicyBody(record.pilot.name, profileId, record.pilot.targets, record.pilot.enabled);
         step.body = body;
+        await sending(step);
         const { value, note } = step.found
           ? await use({ ...step, found: step.found })
           : await auditedCreate(
@@ -623,11 +651,13 @@ export async function execute(
           step.note = [step.note, `Read back at priority ${back.priority}.`].filter(Boolean).join(" ");
         }
       }
+      delete step.sending;
       await saveRecord(dataDir, record);
     }
     record.status = "built";
   } catch (err) {
     const step = record.steps.find((s) => s.status === "planned");
+    if (step) delete step.sending;
     if (step && err instanceof UnreadAfterWriteError) {
       // Sophos didn't answer the create with a success, and the tenant couldn't be read to look for it by name: it may
       // have been made. Not confirmed, not failed; there's no id, so the next build looks for it by name first.

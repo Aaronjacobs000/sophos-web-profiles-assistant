@@ -148,15 +148,20 @@ function lookedUpText(steps) {
     .join("");
 }
 
+/** Steps in the order a rollback deletes them: the policy, then the profile, then the site lists, last made first (build-service.ts). */
+function inDeleteOrder(steps) {
+  return ["policy", "profile", "site-list"].flatMap((k) => steps.filter((s) => s.kind === k).reverse());
+}
+
 /**
- * What the rollback's confirm asks: the objects it deletes, in that order, the steps it looks for by name, and the
- * Website Management changes. When there's nothing to delete or look for, it says so.
+ * What the rollback's confirm asks: the objects it deletes, in the order it deletes them, the steps it looks for by
+ * name, and the Website Management changes. When there's nothing to delete or look for, it says so.
  */
 function rollbackQuestion(plan) {
   const named = (xs) => xs.map((s) => `${(KIND[s.kind] ?? "object").toLowerCase()} "${s.name}"`).join(", ");
-  const objs = plan.steps.filter((s) => s.id && s.status !== "deleted");
+  const objs = inDeleteOrder(plan.steps.filter((s) => s.id && s.status !== "deleted"));
   // Steps Sophos didn't confirm were made have no id: the rollback looks for them by name.
-  const asked = plan.steps.filter((s) => s.status === "unconfirmed" && !s.id);
+  const asked = inDeleteOrder(plan.steps.filter((s) => s.status === "unconfirmed" && !s.id));
   const wm = plan.restorePlan?.length ?? 0;
   const refused = plan.restoreRefused ? `\n\n${plan.restoreRefused}` : "";
   if (!objs.length && !asked.length) {
