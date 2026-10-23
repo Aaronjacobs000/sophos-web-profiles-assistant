@@ -14,7 +14,9 @@
  * didn't go through is kept as partial and can be undone (category D), and
  * an undo that wasn't confirmed can be sent again. A new list Sophos gave no
  * clear answer to, with the site lists unread after, is kept as unconfirmed:
- * the next Allow looks for it by name, and uses it if it's there.
+ * the next Allow looks for it by name, and uses it if it's there. Each write
+ * is marked as sending, and saved, before it goes, so a server that stops
+ * while one is in flight leaves the entry not confirmed, as a build does.
  */
 
 import { promises as fs } from "node:fs";
@@ -42,7 +44,7 @@ import { listAllEndpoints } from "../sophos/api/endpoints.js";
 import { SITE_LIST_LIMIT } from "../domain/design.js";
 import { fitName } from "../domain/cleanup.js";
 import { auditedWrite, auditOrWarn } from "./audit-log.js";
-import { auditedCreate, foundByName, getBuild, idsCreatedByTool, listBuilds, lookUpByName, saveRecord, unreadLookUp, type BuildRecord, type BuildStep } from "./build-service.js";
+import { IN_FLIGHT, auditedCreate, foundByName, getBuild, idsCreatedByTool, listBuilds, lookUpByName, saveRecord, unreadLookUp, type BuildRecord, type BuildStep } from "./build-service.js";
 import { UnreadAfterWriteError, foundNote, notFound, readBack, sendChecked, takenNameAdvice, unreadCreateFrom } from "./write-check.js";
 import { readText, saveFile } from "./safe-files.js";
 
@@ -173,6 +175,12 @@ export interface AllowEntry {
   error?: string;
   undoneAt?: string;
   undo?: string[];
+  /**
+   * Set, and saved, just before a write of this entry's Allow is sent (the new list's create, its link to the profile,
+   * or the site's add to a list), and cleared once the Allow's outcome is recorded. An entry saved with it was in flight
+   * when the server stopped, so the write may have gone through: it's read as not confirmed (loadPilotRecord).
+   */
+  sending?: boolean;
 }
 
 interface PilotRecord {
@@ -208,6 +216,26 @@ export async function loadPilotRecord(dataDir: string, tenantId: string): Promis
     a.answer = was.answer;
     a.readBack = `not read: ${was.unread}`;
     delete a.error;
+  }
+  // An Allow with a write in flight when the server stopped (sending) may have made it, so it's not confirmed, in the
+  // state the same write is in when Sophos gives no clear answer and nothing can be read after. The file isn't changed.
+  for (const a of r.allows) {
+    if (!a.sending) continue;
+    delete a.sending;
+    a.answer = IN_FLIGHT.answer;
+    if (!a.listId) {
+      // The new list's create: the next Allow, Undo and a rollback look for the list by name.
+      a.status = "unconfirmed";
+      a.readBack = `not read: ${IN_FLIGHT.unread}`;
+    } else if (a.createdList) {
+      // The list was made, and its link to the profile was in flight or still to send: Undo removes the list.
+      a.status = "partial";
+      a.readBack = `${a.readBack ? `${a.readBack}; ` : ""}profile not read: ${IN_FLIGHT.unread}`;
+    } else {
+      // The site's add to a list: Undo removes the site if it's there.
+      a.status = "added";
+      a.readBack = `not read: ${IN_FLIGHT.unread}`;
+    }
   }
   return r;
 }
@@ -366,6 +394,14 @@ export async function addAllow(dataDir: string, ctx: TenantContext, host: string
   let holder = entry;
   // What the profile read back after the link, which an Allow that adds its site to another entry's list carries too.
   let linked: string | undefined;
+  /**
+   * Marks the entry a write is about to go for, and saves the record before it goes, so a server that stops before the
+   * outcome is recorded leaves it as sent (loadPilotRecord). This Allow's own entry is saved once a write of its own goes.
+   */
+  const sending = async (a: AllowEntry): Promise<void> => {
+    a.sending = true;
+    await savePilotRecord(dataDir, { ...record, allows: record.allows.filter((x) => x !== entry || x.sending) });
+  };
   try {
     for (const step of plan.steps) {
       if (step.op === "use-list") {
@@ -373,6 +409,10 @@ export async function addAllow(dataDir: string, ctx: TenantContext, host: string
         holder.listId = step.listId;
         holder.listName = step.name;
         holder.createdList = true;
+        // On record as the list's holder, with its link still to send, before the build takes the list.
+        await sending(holder);
+        // The build owns the list from here, as one the Allow made, so rolling the build back deletes it.
+        await ownedByBuild(dataDir, t, plan.pilot.buildId, step.listId, step.name);
         entry.note = `The site list "${step.name}" was found by name and used, not made again.`;
         await auditOrWarn({ tenantId: t, action: "reuse", resource: "site-list", resourceId: step.listId, ok: true, detail: { name: step.name, pilotBuild: plan.pilot.buildId, allow: holder.id, note: "Found by name after an Allow's create Sophos didn't confirm; used, not made again" } });
         const back = await readBack(async () => {
@@ -382,11 +422,10 @@ export async function addAllow(dataDir: string, ctx: TenantContext, host: string
         holder.readBack = back.value ? (back.value.map((x) => x.toLowerCase()).includes(holder.site) ? "list holds the site" : "list read back without the site") : `not read: ${back.unread ?? "no read-back"}`;
         // Found by name says it was made, not what's in it: what Sophos said to the create stays unless it read back holding the site.
         if (holder.readBack === "list holds the site") delete holder.answer;
-        // The build owns the list from here, as one the Allow made, so rolling the build back deletes it.
-        await ownedByBuild(dataDir, t, plan.pilot.buildId, step.listId, step.name);
       } else if (step.op === "add-site") {
         entry.listId = step.listId;
         entry.listName = step.listName;
+        await sending(entry);
         // A 5xx or no answer can still have gone through, so it's read back like a 2xx; a refusal is thrown.
         const { value: res, unclear } = await sendChecked(() => auditedWrite({ tenantId: t }, "add-site", "site-list", step.listId, () => addSite(api, t, step.listId, site), { site, pilotBuild: plan.pilot.buildId }));
         const back = await readBack(async () => (await listSites(ro, t, step.listId)).find((s) => s.site.toLowerCase() === site) ?? null);
@@ -401,6 +440,9 @@ export async function addAllow(dataDir: string, ctx: TenantContext, host: string
         if (unclear && back.unread) entry.answer = unclear.reason.replace(/\.$/, "");
       } else if (step.op === "create-list") {
         const body = { name: step.name, description: "Narrow Allow entries added from the pilot digest (Web Profiles Assistant, unofficial).", sites: [site] };
+        // Saved with the list's name, so after a stop the next Allow, Undo and a rollback look for it by name.
+        entry.listName = step.name;
+        await sending(entry);
         const made = await auditedCreate(
           t,
           "site-list",
@@ -424,6 +466,10 @@ export async function addAllow(dataDir: string, ctx: TenantContext, host: string
         entry.listId = value.id;
         entry.listName = step.name;
         entry.createdList = true;
+        // On record with the list's id, its link still to send, before the build takes the list.
+        await sending(entry);
+        // The build owns the list from here, so rolling the build back deletes it.
+        await ownedByBuild(dataDir, t, plan.pilot.buildId, value.id, step.name);
         // Made: a read-back that fails leaves the Allow unconfirmed, not failed, and the list is still the build's.
         const back = await readBack(async () => {
           const l = await getSiteList(ro, t, value.id);
@@ -432,8 +478,6 @@ export async function addAllow(dataDir: string, ctx: TenantContext, host: string
         entry.readBack = back.value ? (back.value.map((x) => x.toLowerCase()).includes(site) ? "list holds the site" : "list read back without the site") : `not read: ${back.unread ?? "no read-back"}`;
         // Found by name after a 5xx says it was made, not what's in it: unless it read back holding the site, the page doesn't say Sophos accepted the Allow.
         if (unclear && entry.readBack !== "list holds the site") entry.answer = unclear.reason.replace(/\.$/, "");
-        // The build owns the list from here, so rolling the build back deletes it.
-        await ownedByBuild(dataDir, t, plan.pilot.buildId, value.id, step.name);
       } else {
         // The link is the holder's: the entry whose list it is.
         const current = await getProfile(ro, t, step.profileId);
@@ -441,6 +485,7 @@ export async function addAllow(dataDir: string, ctx: TenantContext, host: string
         const body = profilePutBody(current);
         body.filterBySiteList = true;
         body.siteListActions = [...(current.siteListActions ?? []), { id: holder.listId!, action: "allow", priority: step.priority }];
+        await sending(holder);
         // A 5xx or no answer can still have gone through, so it's read back like a 2xx; a refusal is thrown, and the list stays undoable.
         const { unclear } = await sendChecked(() => auditedWrite({ tenantId: t }, "update", "profile", step.profileId, () => replaceProfile(api, t, step.profileId, body), { linkList: holder.listId, action: "allow", priority: step.priority }));
         const back = await readBack(async () => {
@@ -462,6 +507,8 @@ export async function addAllow(dataDir: string, ctx: TenantContext, host: string
         holder.readBack = `${holder.readBack}; ${linked}`;
         // An earlier entry whose list this Allow found and linked is added now, whatever happens to this Allow's own site.
         if (holder !== entry) holder.status = "added";
+        // The link's outcome is recorded: the holder has no write in flight.
+        delete holder.sending;
       }
     }
     if (entry.status !== "unconfirmed") entry.status = "added";
@@ -475,6 +522,9 @@ export async function addAllow(dataDir: string, ctx: TenantContext, host: string
       holder.error = entry.error;
     }
   }
+  // The outcome is recorded: nothing is in flight.
+  delete entry.sending;
+  delete holder.sending;
   await savePilotRecord(dataDir, record);
   if (entry.status === "failed") throw new Error(`The Allow entry wasn't completed: ${entry.error}`);
   return { plan, entry };
