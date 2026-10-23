@@ -42,8 +42,8 @@ import { listAllEndpoints } from "../sophos/api/endpoints.js";
 import { SITE_LIST_LIMIT } from "../domain/design.js";
 import { fitName } from "../domain/cleanup.js";
 import { auditedWrite, auditOrWarn } from "./audit-log.js";
-import { auditedCreate, getBuild, idsCreatedByTool, listBuilds, saveRecord, type BuildRecord, type BuildStep } from "./build-service.js";
-import { UnreadAfterWriteError, foundNote, notFound, readBack, sendChecked, takenNameAdvice } from "./write-check.js";
+import { auditedCreate, foundByName, getBuild, idsCreatedByTool, listBuilds, lookUpByName, saveRecord, unreadLookUp, type BuildRecord, type BuildStep } from "./build-service.js";
+import { UnreadAfterWriteError, foundNote, notFound, readBack, sendChecked, takenNameAdvice, unreadCreateFrom } from "./write-check.js";
 import { readText, saveFile } from "./safe-files.js";
 
 const SECTION = "pilot";
@@ -79,7 +79,8 @@ export async function activePilot(dataDir: string, tenantId: string): Promise<Pi
         ? {
             at: b.rollback?.at,
             reason: failed ? failed.error ?? `${failed.name} was still there after the delete.` : undefined,
-            left: b.steps.filter((s) => s.id && s.status !== "deleted").map((s) => ({ kind: s.kind, name: s.name })),
+            // A step Sophos didn't confirm was made, which the rollback couldn't look for by name, may be there too.
+            left: b.steps.filter((s) => (s.id && s.status !== "deleted") || s.status === "unconfirmed").map((s) => ({ kind: s.kind, name: s.name })),
           }
         : undefined;
     return {
@@ -144,10 +145,13 @@ export interface AllowEntry {
    * partial: Sophos made the pilot allows list, but its link to the profile didn't go through, or Sophos didn't answer it
    * with a success and no read of the profile worked (answer, and "profile not read: " in readBack), so it can be undone.
    * unconfirmed: Sophos didn't answer the new list's create with a success, and the tenant's site lists couldn't be read
-   * to look for it by name after (answer, and "not read: " in readBack), so it may have been made. There's no list id to
-   * undo; the next Allow looks for the list by name first, and an Allow of the same site carries on this entry.
+   * to look for it by name after (answer, and "not read: " in readBack), so it may have been made. There's no list id;
+   * the next Allow looks for the list by name first, and an Allow of the same site carries on this entry. Undo, and a
+   * rollback of the build, look for it by name too, and delete it if it's there.
    */
   status: "added" | "partial" | "unconfirmed" | "failed" | "undone" | "undo-failed";
+  /** Set on an unconfirmed entry when Undo couldn't read the site lists to look for its list by name: "not read: " and why. */
+  undoLookUp?: string;
   /** Set when the Allow used a list it found by name, which an earlier Allow asked for (unconfirmed): says so. */
   note?: string;
   /**
@@ -181,8 +185,8 @@ function recordPath(dataDir: string, tenantId: string): string {
   return path.join(dataDir, "pilot", `${tenantId}.json`);
 }
 
-/** The Allow entries that can be undone: added, partial, and an undo that didn't finish. */
-export const ALLOW_UNDOABLE: ReadonlyArray<AllowEntry["status"]> = ["added", "partial", "undo-failed"];
+/** The Allow entries that can be undone: added, partial, an undo that didn't finish, and one whose list Sophos didn't confirm (looked for by name). */
+export const ALLOW_UNDOABLE: ReadonlyArray<AllowEntry["status"]> = ["added", "partial", "undo-failed", "unconfirmed"];
 
 /** A partial Allow whose link Sophos didn't answer with a success, with no read of the profile after it: whether the list is linked isn't known. */
 const linkUnknown = (a: AllowEntry) => a.status === "partial" && !!a.answer && /(^|; )profile not read: /.test(a.readBack ?? "");
@@ -192,7 +196,25 @@ export async function loadPilotRecord(dataDir: string, tenantId: string): Promis
   const r = text ? (JSON.parse(text) as PilotRecord) : { tenantId, allows: [] };
   // Before v0.3.20 an Allow whose list Sophos made but whose link to the profile failed was saved as failed: the list is in the tenant.
   for (const a of r.allows) if (a.status === "failed" && a.createdList && a.listId) a.status = "partial";
+  // Before v0.3.24 an Allow whose new list Sophos didn't answer with a success, with the site lists unread after, was
+  // saved as failed with no list: it's unconfirmed, so the next Allow, Undo and a rollback look for the list by name. It
+  // asked for the pilot's list name, from its build's profile. The file isn't changed.
+  for (const a of r.allows) {
+    const was = a.status === "failed" && !a.listId && !a.createdList ? unreadCreateFrom(a.error, "the tenant's site lists") : null;
+    const profile = was && (await getBuild(dataDir, tenantId, a.buildId).catch(() => null))?.steps.find((s) => s.kind === "profile");
+    if (!was || !profile) continue;
+    a.status = "unconfirmed";
+    a.listName ||= pilotListName({ profileName: profile.name });
+    a.answer = was.answer;
+    a.readBack = `not read: ${was.unread}`;
+    delete a.error;
+  }
   return r;
+}
+
+/** The ids on record that a list found by name for an unconfirmed Allow can't be: every build's, and every Allow's. */
+async function recordedListIds(dataDir: string, tenantId: string, record: PilotRecord): Promise<Set<string | undefined>> {
+  return new Set([...(await idsCreatedByTool(dataDir, tenantId)), ...record.allows.map((x) => x.listId)]);
 }
 
 async function savePilotRecord(dataDir: string, r: PilotRecord): Promise<void> {
@@ -232,7 +254,7 @@ export interface AllowPlan {
   notes: string[];
 }
 
-function pilotListName(pilot: PilotInfo): string {
+function pilotListName(pilot: Pick<PilotInfo, "profileName">): string {
   return fitName(pilot.profileName.replace(/ profile$/i, ""), " pilot allows");
 }
 
@@ -298,8 +320,8 @@ export async function planAllow(dataDir: string, ctx: TenantContext, host: strin
     // An earlier Allow whose create of the list Sophos didn't confirm (unconfirmed) may have made it: a list by that name
     // that no record has an id for is that one, and this Allow uses it. The entry for this site goes first.
     const asked = record.allows.filter((x) => x.status === "unconfirmed" && !x.listId && x.buildId === pilot.buildId && x.listName.toLowerCase() === name.toLowerCase());
-    const recorded = taken && !partial && asked.length ? new Set([...(await idsCreatedByTool(dataDir, t)), ...record.allows.map((x) => x.listId)]) : new Set<string | undefined>();
-    const by = taken && !partial && !recorded.has(taken.id) ? asked.find((x) => x.site === site) ?? asked[0] : undefined;
+    const there = taken && !partial && asked.length ? foundByName(lists, name, await recordedListIds(dataDir, t, record)) : undefined;
+    const by = there ? asked.find((x) => x.site === site) ?? asked[0] : undefined;
     // A list found by name for an earlier Allow is already in the account.
     if (lists.length >= SITE_LIST_LIMIT && !by) plan.problems.push(`The account has ${lists.length} of ${SITE_LIST_LIMIT} site lists, so a pilot allows list won't fit.`);
     if (actions.length >= LISTS_PER_PROFILE) plan.problems.push(`The profile already has ${LISTS_PER_PROFILE} site lists.`);
@@ -462,6 +484,10 @@ export async function addAllow(dataDir: string, ctx: TenantContext, host: string
 const CONFIRMED_PARTS = new Set(["site listed", "list holds the site", "profile links it as allow"]);
 const allowConfirmed = (readBack: string | undefined) => !!readBack && readBack.split("; ").every((part) => CONFIRMED_PARTS.has(part));
 
+/** What Undo, or a rollback of the build, says of an unconfirmed Allow's list it looked for by name (the page uses the same). */
+const FOUND_LIST = "The list was found by name.";
+const NOTHING_TO_REMOVE = "No list by that name in the tenant, so there was nothing to remove.";
+
 /**
  * Marks the pilot allows list in the build record as deleted, or as a delete that didn't finish, so a rollback knows.
  * A delete that wasn't confirmed keeps its read-back ("still there", or "not read: " and why), and what Sophos said when
@@ -471,6 +497,15 @@ const allowConfirmed = (readBack: string | undefined) => !!readBack && readBack.
 /** Adds the pilot allows list to the build record, so rolling the build back deletes it. */
 async function ownedByBuild(dataDir: string, tenantId: string, buildId: string, listId: string, name: string): Promise<void> {
   const build = await getBuild(dataDir, tenantId, buildId);
+  // A rollback that couldn't look for this list by name left a step for it with no id: it takes the id.
+  const asked = build.steps.find((s) => s.kind === "site-list" && s.status === "unconfirmed" && !s.id && s.name.toLowerCase() === name.toLowerCase());
+  if (asked) {
+    Object.assign(asked, { status: "created", id: listId, readBack: "matches" });
+    delete asked.answer;
+    delete asked.readBackNote;
+    await saveRecord(dataDir, build);
+    return;
+  }
   build.steps.push({
     order: build.steps.length + 1,
     kind: "site-list",
@@ -509,9 +544,35 @@ export async function undoAllow(dataDir: string, ctx: TenantContext, allowId: st
   const record = await loadPilotRecord(dataDir, t);
   const entry = record.allows.find((a) => a.id === allowId);
   if (!entry) throw new Error("No such Allow entry.");
+  // Only this attempt's lookup counts.
+  delete entry.undoLookUp;
+  let lookedUp: string | undefined;
+  if (entry.status === "unconfirmed" && !entry.listId) {
+    // Sophos didn't confirm the new list was made, so there's no id: look for it by name, as the next Allow does.
+    const look = await lookUpByName(api, t, "site-list", entry.listName, await recordedListIds(dataDir, t, record));
+    if (look.unread !== undefined) {
+      // Not read: it may or may not be there, so the entry stays unconfirmed, and Undo looks again.
+      entry.undoLookUp = `not read: ${look.unread}`;
+      entry.undo = [unreadLookUp("site-list", look.unread)];
+      await savePilotRecord(dataDir, record);
+      return entry;
+    }
+    if (!look.found) {
+      entry.status = "undone";
+      entry.undoneAt = new Date().toISOString();
+      entry.undo = [NOTHING_TO_REMOVE];
+      await savePilotRecord(dataDir, record);
+      return entry;
+    }
+    // Found: the entry holds it, as if the Allow had made it, and so does the build; the undo below deletes it.
+    entry.listId = look.found.id;
+    entry.createdList = true;
+    await ownedByBuild(dataDir, t, entry.buildId, look.found.id, entry.listName);
+    lookedUp = FOUND_LIST;
+  }
   if (!ALLOW_UNDOABLE.includes(entry.status) || !entry.listId) throw new Error(`This entry is ${entry.status}; there's nothing to undo.`);
   const listId = entry.listId;
-  const notes: string[] = [];
+  const notes: string[] = lookedUp ? [lookedUp] : [];
   // An undo sent again, or one of an Allow that wasn't confirmed, may meet what an earlier write already did: the list gone, or the site not in it.
   const retry = !(entry.status === "added" && allowConfirmed(entry.readBack));
   // Only this attempt's read-back counts.
@@ -607,4 +668,69 @@ export async function undoAllow(dataDir: string, ctx: TenantContext, allowId: st
   entry.undo = notes;
   await savePilotRecord(dataDir, record);
   return entry;
+}
+
+/** The key a rollback gives the step it adds for an unconfirmed Allow's list (askedAllowLists). */
+const ASKED_KEY = "pilot-allows-asked-";
+
+/**
+ * For a rollback of a build: an Allow of it whose new list Sophos didn't confirm (unconfirmed, no list id) left no id to
+ * delete, so the rollback looks for that list by name, with the ids the next Allow leaves alone (recorded). Each name the
+ * build has no step for yet comes back as an unconfirmed step for the rollback to add.
+ */
+export async function askedAllowLists(dataDir: string, tenantId: string, build: BuildRecord): Promise<{ steps: BuildStep[]; recorded: Set<string | undefined> }> {
+  const record = await loadPilotRecord(dataDir, tenantId);
+  const steps: BuildStep[] = [];
+  for (const a of record.allows) {
+    if (a.status !== "unconfirmed" || a.listId || a.buildId !== build.id || !a.listName) continue;
+    // One step a name: a rollback before this one that couldn't look may have added it already.
+    if ([...build.steps, ...steps].some((s) => s.kind === "site-list" && s.status === "unconfirmed" && !s.id && s.name.toLowerCase() === a.listName.toLowerCase())) continue;
+    const order = build.steps.length + steps.length + 1;
+    steps.push({
+      order,
+      kind: "site-list",
+      key: `${ASKED_KEY}${order}`,
+      name: a.listName,
+      method: "POST",
+      path: "/web-filters/v1/site-lists",
+      summary: "Narrow Allow entries from the pilot digest",
+      body: {},
+      status: "unconfirmed",
+      ...(a.answer ? { answer: a.answer } : {}),
+      readBack: "not-read",
+      readBackNote: (a.readBack ?? "").replace(/^not read: /, ""),
+    });
+  }
+  const asked = steps.length || build.steps.some((s) => s.key.startsWith(ASKED_KEY) && s.status === "unconfirmed");
+  return { steps, recorded: asked ? await recordedListIds(dataDir, tenantId, record) : new Set() };
+}
+
+/**
+ * After a rollback of the build looked for those lists by name: an entry whose list it found and deleted, or found
+ * nothing for, is undone, saying which. One whose list it found but didn't confirm deleted holds the list (partial), so
+ * Undo deletes it, as the next rollback does. One it couldn't look for stays unconfirmed.
+ */
+export async function settleAllowLists(dataDir: string, tenantId: string, build: BuildRecord): Promise<void> {
+  const record = await loadPilotRecord(dataDir, tenantId);
+  let changed = false;
+  for (const a of record.allows) {
+    if (a.status !== "unconfirmed" || a.listId || a.buildId !== build.id) continue;
+    // The latest step for its list name: the one this rollback looked for.
+    const s = [...build.steps].reverse().find((x) => x.key.startsWith(ASKED_KEY) && x.name.toLowerCase() === a.listName.toLowerCase());
+    if (!s || s.status === "unconfirmed") continue;
+    changed = true;
+    if (s.id) {
+      a.listId = s.id;
+      a.createdList = true;
+    }
+    if (s.status === "deleted" || s.status === "not-found") {
+      a.status = "undone";
+      a.undoneAt = new Date().toISOString();
+      a.undo = s.status === "deleted" ? [FOUND_LIST, "List deleted with the build, 404 on read-back."] : [NOTHING_TO_REMOVE];
+    } else {
+      a.status = "partial";
+      a.error = "The rollback found the list by name, but didn't confirm it deleted. Undo, or roll the build back again.";
+    }
+  }
+  if (changed) await savePilotRecord(dataDir, record);
 }

@@ -35,8 +35,11 @@ const OPEN_DELETE = ["not confirmed", "still there after delete"];
 // So can a delete Sophos refused, as a rollback sends one again.
 const REFUSED_DELETE = ["delete failed", "in use by a profile, left"];
 
-/** What the last undo left, for the note by Undo again: deletes it couldn't confirm, and deletes Sophos refused. */
-function undoLeftHint(open, refused) {
+// A list Sophos didn't confirm was made has no id: an undo looks for it by name, and says when it couldn't read the site lists.
+const lookUpUnread = (l) => l.status === "unconfirmed" && !l.id && /^not read: /.test(l.lookedUp ?? "");
+
+/** What the last undo left, for the note by Undo again: deletes it couldn't confirm, deletes Sophos refused, and lists it couldn't look for. */
+function undoLeftHint(open, refused, unread = []) {
   const named = (xs) => (xs.length === 1 ? `"${esc(xs[0].name)}"` : `${xs.length} site lists`);
   const failed = refused.filter((l) => l.status === "delete failed");
   const inUse = refused.filter((l) => l.status === "in use by a profile, left");
@@ -45,8 +48,10 @@ function undoLeftHint(open, refused) {
   if (failed.length) said.push(`${said.length ? "It" : "The last undo"} couldn't delete ${named(failed)}.`);
   const one = inUse.length === 1;
   if (inUse.length) said.push(`${named(inUse)} ${one ? "is" : "are"} in use by a profile, so ${one ? "it was" : "they were"} left: take ${one ? "it" : "them"} off the profile in Sophos Fusion first.`);
+  if (unread.length) said.push(`${said.length ? "It" : "The last undo"} couldn't look for ${named(unread)} by name, so ${unread.length === 1 ? "it" : "they"} may be in the tenant.`);
   const n = open.length + refused.length;
-  return `${said.join(" ")} Undo again to send ${n === 1 ? "that delete" : "those deletes"} again, or check the site lists in Sophos Fusion.`;
+  const again = !n ? "look again" : `send ${n === 1 ? "that delete" : "those deletes"} again${unread.length ? " and look again" : ""}`;
+  return `${said.join(" ")} Undo again to ${again}, or check the site lists in Sophos Fusion.`;
 }
 
 export function listsHtml(view, base) {
@@ -55,6 +60,10 @@ export function listsHtml(view, base) {
   const made = last.some((l) => l.status === "created");
   const open = last.filter((l) => OPEN_DELETE.includes(l.status));
   const refused = last.filter((l) => REFUSED_DELETE.includes(l.status));
+  // A list Sophos didn't confirm was made can be undone too: the undo looks for it by name first.
+  const asked = last.filter((l) => l.status === "unconfirmed" && !l.id);
+  const unread = asked.filter(lookUpUnread);
+  const first = made || asked.length > unread.length;
   const cards = lists
     .map(
       (l, i) => `<div class="cu-list"><span class="tag ${ACTION_TAG[l.action]}">${esc(l.action)}</span><div><b>${esc(l.name)}</b><span class="hint">${n(l.sites)} ${l.sites === 1 ? "site" : "sites"}</span></div><a class="btn btn-small" href="${base}/${i}.csv">${icon("download")}CSV</a></div>`,
@@ -64,9 +73,9 @@ export function listsHtml(view, base) {
     <div class="cu-list-actions">
       <a class="btn" href="${base}/results.csv">${icon("download")}All results (CSV)</a>
       ${view.canCreate ? `<button class="btn btn-soft" id="create-lists"${lists.length ? "" : " disabled"}>${icon("play")}Create site lists</button>` : ""}
-      ${made || open.length || refused.length ? `<button class="btn" id="undo-lists">${made ? "Undo last lists" : "Undo again"}</button>` : ""}
+      ${made || open.length || refused.length || asked.length ? `<button class="btn" id="undo-lists">${first ? "Undo last lists" : "Undo again"}</button>` : ""}
     </div>
-    ${(open.length || refused.length) && !made ? `<p class="hint" data-undo-open>${undoLeftHint(open, refused)}</p>` : ""}
+    ${(open.length || refused.length || unread.length) && !first ? `<p class="hint" data-undo-open>${undoLeftHint(open, refused, unread)}</p>` : ""}
     ${view.leftOut ? `<p class="hint">${n(view.leftOut)} ${view.leftOut === 1 ? "entry is" : "entries are"} left out until you decide: broad entries, and entries with different actions in different policies.</p>` : ""}
   </div>`;
 }
@@ -177,17 +186,22 @@ function listsOutcome(rec, planned) {
  * What an undo did (category C): green only when every list read back gone (404); amber when Sophos accepted a delete,
  * or didn't answer it with a success, but the read-back didn't confirm it, or some were deleted and others refused; red
  * when every delete was refused. It says Sophos accepted a delete only when Sophos answered it with a success. Why goes
- * on the Detail line.
+ * on the Detail line. A list Sophos didn't confirm was made is looked for by name: the message says what was found and
+ * deleted, or wasn't there, and it's amber when the site lists couldn't be read to look.
  */
 function undoOutcome(rec) {
   const rows = rec.lists.filter((l) => ["deleted", "still there after delete", "not confirmed", "in use by a profile, left", "delete failed"].includes(l.status));
   const gone = rows.filter((l) => l.status === "deleted");
   const open = rows.filter((l) => l.status === "still there after delete" || l.status === "not confirmed");
   const refused = rows.filter((l) => l.status === "in use by a profile, left" || l.status === "delete failed");
+  // Lists Sophos didn't confirm were made, looked for by name: found (then deleted as above), not there, or not read.
+  const unread = rec.lists.filter(lookUpUnread);
   const lists = (k) => `${k} site ${k === 1 ? "list" : "lists"}`;
   const name = (xs, many) => (xs.length === 1 ? `"${xs[0].name}"` : many);
   const why = (l) => (l.status === "in use by a profile, left" ? `"${l.name}" is in use by a profile, so it was left.${l.error ? ` ${sentence(l.error)}` : ""}` : `"${l.name}": ${sentence(l.error ?? "")}`);
-  if (!open.length && !refused.length) return { state: "confirmed", text: `Undone: ${gone.length === 1 ? `"${gone[0].name}" deleted` : `${lists(gone.length)} deleted`} and read back.`, reason: "" };
+  const looked = lookedUpText(rec.lists);
+  // A list found by name and deleted is said once, in looked.
+  const plainGone = gone.filter((l) => l.lookedUp !== "found");
   // A list that read back still there, or couldn't be read back, and why: first what Sophos said when it wasn't a success.
   const openWhy = (l) => {
     const back = readBackParts(l.readBack);
@@ -195,13 +209,24 @@ function undoOutcome(rec) {
     return back.detail ? `"${l.name}": ${sentence(back.detail)}` : `"${l.name}" was still there after the delete.`;
   };
   const reasons = [...refused.map(why), ...open.map(openWhy)].join(" ");
+  if (unread.length) {
+    const one = unread.length === 1;
+    const text = `Couldn't confirm whether ${name(unread, `${unread.length} site lists`)} ${one ? "is" : "are"} in the tenant: Sophos didn't confirm ${one ? "it was" : "they were"} made, and the undo couldn't look for ${one ? "it" : "them"} by name. Check the site lists in Sophos Fusion, or undo again.`;
+    const left = open.length + refused.length;
+    const rest = [plainGone.length ? ` ${lists(plainGone.length)} deleted and read back.` : "", left ? ` ${left === 1 ? "One delete isn't" : `${left} deletes aren't`} confirmed.` : ""].join("");
+    return { state: "unconfirmed", text: `${text}${rest}${looked}`, reason: [...unread.map((l) => `"${l.name}": ${sentence(readBackParts(l.lookedUp).detail)}`), reasons].filter(Boolean).join(" ") };
+  }
+  if (!open.length && !refused.length) {
+    if (!plainGone.length) return { state: "confirmed", text: `Undone.${looked}`, reason: "" };
+    return { state: "confirmed", text: `Undone: ${plainGone.length === 1 ? `"${plainGone[0].name}" deleted` : `${lists(plainGone.length)} deleted`} and read back.${looked}`, reason: "" };
+  }
   if (refused.length) {
     const done = gone.length + open.length;
-    return { state: done ? "unconfirmed" : "failed", text: `Couldn't delete ${name(refused, `${refused.length} of the site lists`)}${gone.length ? `. ${lists(gone.length)} deleted and read back` : ""}${open.length ? `. ${open.length === 1 ? "One delete isn't" : `${open.length} deletes aren't`} confirmed` : ""}.`, reason: reasons };
+    return { state: done ? "unconfirmed" : "failed", text: `Couldn't delete ${name(refused, `${refused.length} of the site lists`)}${gone.length ? `. ${lists(gone.length)} deleted and read back` : ""}${open.length ? `. ${open.length === 1 ? "One delete isn't" : `${open.length} deletes aren't`} confirmed` : ""}.${looked}`, reason: reasons };
   }
   // A delete Sophos answered with a 5xx or a 404, or not at all, wasn't accepted: say what's known, not that it was.
   const unanswered = open.filter((l) => l.deleteAnswer);
-  if (!unanswered.length) return { state: "unconfirmed", text: `Sophos accepted the ${open.length + gone.length === 1 ? "delete" : "deletes"}, but the read-back didn't confirm ${name(open, `${open.length} of them`)}.`, reason: reasons };
+  if (!unanswered.length) return { state: "unconfirmed", text: `Sophos accepted the ${open.length + gone.length === 1 ? "delete" : "deletes"}, but the read-back didn't confirm ${name(open, `${open.length} of them`)}.${looked}`, reason: reasons };
   const [n, k] = [open.length, unanswered.length];
   const text =
     n === 1
@@ -209,7 +234,15 @@ function undoOutcome(rec) {
       : k === n
         ? `Sophos didn't say ${n} of the deletes went through, and the read-back didn't confirm them.`
         : `The read-back didn't confirm ${n} of the deletes, and Sophos didn't say ${k} of those went through.`;
-  return { state: "unconfirmed", text, reason: reasons };
+  return { state: "unconfirmed", text: `${text}${looked}`, reason: reasons };
+}
+
+/** What an undo did with each list Sophos didn't confirm was made, which it looked for by name: found and deleted, or not there. */
+function lookedUpText(rows) {
+  return rows
+    .filter((l) => (l.lookedUp === "found" && l.status === "deleted") || l.lookedUp === "not found")
+    .map((l) => ` "${l.name}", which Sophos didn't confirm was made, ${l.lookedUp === "found" ? "was found by name, deleted and read back" : "isn't in the tenant, so there was nothing to remove"}.`)
+    .join("");
 }
 
 /** Wires filters, search, decisions and list buttons. `endpoints` names the page's API paths. */
@@ -256,7 +289,8 @@ export function wireView(root, view, endpoints, rerender) {
     }
   });
   root.querySelector("#undo-lists")?.addEventListener("click", async () => {
-    if (!window.confirm("Delete the site lists the last create made? Lists a profile uses are left.")) return;
+    const asked = (view.lastLists?.lists ?? []).some((l) => l.status === "unconfirmed" && !l.id);
+    if (!window.confirm(`Delete the site lists the last create made? Lists a profile uses are left.${asked ? " A list Sophos didn't confirm was made is looked for by name first." : ""}`)) return;
     try {
       const rec = await api.post(endpoints.lists, { ...endpoints.listBody, undo: true });
       const o = undoOutcome(rec);

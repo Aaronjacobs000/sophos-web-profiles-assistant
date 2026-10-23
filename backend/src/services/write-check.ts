@@ -144,6 +144,18 @@ export function notFound(err: UnclearWriteError, miss: ReadBackMiss, unread?: st
 }
 
 /**
+ * What notFound says of a create whose name lookup couldn't be read, read back into what Sophos said (answer) and why
+ * nothing was read (unread). v0.3.23 and earlier saved such a create as failed with this message; where is what the
+ * lookup read, for example "the tenant's site lists". Null for any other message, so a create that failed another way
+ * stays failed.
+ */
+export function unreadCreateFrom(message: string | undefined, where: string): { answer: string; unread: string } | null {
+  const escaped = where.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const m = new RegExp(`^([\\s\\S]+?)\\. A read-back could not read ${escaped} \\(([\\s\\S]+)\\)\\. The change may still have gone through: check the tenant before trying again\\.$`).exec(message ?? "");
+  return m ? { answer: m[1]!, unread: m[2]! } : null;
+}
+
+/**
  * Sends a write that a read-back then checks. A 5xx, no answer in time or a
  * dropped connection (UnclearWriteError) can still have gone through, so it
  * comes back as unclear rather than thrown, and the caller reads back as it

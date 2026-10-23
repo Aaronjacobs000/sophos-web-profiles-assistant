@@ -20,9 +20,14 @@
  *             is read back too, since it can still go through, and audited
  *             with what the read-back found. So is a delete answered 404,
  *             which was already gone, so its entry matches the step.
+ *             An unconfirmed step has no id, so the rollback first looks
+ *             for it by name, as the next build does: found, it's deleted
+ *             by that id; not there, there's nothing to remove; not read,
+ *             the rollback isn't confirmed. So is an Allow's new list.
  *
- * Deletes go only to ids this tool recorded, never by name: other tools can
- * share a tenant.
+ * Deletes go only to ids this tool recorded, or found by name for a create
+ * Sophos didn't confirm that no record has the id of; never by name alone:
+ * other tools can share a tenant.
  */
 
 import { promises as fs } from "node:fs";
@@ -63,7 +68,7 @@ import { compareToSnapshot, planWebsiteManagementRestore, type RestoreStep } fro
 import { buildSnapshot, canonicalJson, type Snapshot } from "../domain/snapshot.js";
 import { readInventory } from "./inventory-reader.js";
 import { auditedWrite, auditOrWarn } from "./audit-log.js";
-import { UnreadAfterWriteError, createChecked, foundNote, isUnclearWrite, readBack, sendChecked, takenNameAdvice, type ReadBackMiss, type UnclearWriteError } from "./write-check.js";
+import { UnreadAfterWriteError, createChecked, foundNote, isUnclearWrite, readBack, sendChecked, takenNameAdvice, unreadCreateFrom, type ReadBackMiss, type UnclearWriteError } from "./write-check.js";
 import { loadSnapshot } from "./snapshot-store.js";
 import { runReadiness } from "./readiness.js";
 import { readText, saveFile } from "./safe-files.js";
@@ -94,9 +99,11 @@ export interface BuildStep {
   /**
    * unconfirmed: Sophos didn't answer the create with a success (a 5xx, no answer in time or a dropped connection), and
    * the tenant couldn't be read to look for it by name after, so it may have been made. There's no id; answer says what
-   * Sophos said, and readBackNote why nothing was read. The next build looks for it by name first (found).
+   * Sophos said, and readBackNote why nothing was read. The next build looks for it by name first (found), and so does
+   * a rollback. not-found: an unconfirmed step a rollback looked for by name and didn't find, so there was nothing to
+   * remove.
    */
-  status: "planned" | "created" | "unconfirmed" | "failed" | "skipped" | "deleted" | "delete-failed";
+  status: "planned" | "created" | "unconfirmed" | "failed" | "skipped" | "deleted" | "delete-failed" | "not-found";
   id?: string;
   /** Set on an unconfirmed step: what Sophos said to its create. */
   answer?: string;
@@ -152,9 +159,11 @@ export interface BuildRecord {
   checks: Check[];
   /**
    * answer is set on a Website Management step Sophos didn't answer with a success (a 5xx, no answer in time or a
-   * dropped connection) that nothing could be read back after: what it said.
+   * dropped connection) that nothing could be read back after: what it said. lookedUp is set on an unconfirmed step the
+   * rollback looked for by name: "found" (then deleted by its id, as status says), "not found" (status "not there") or
+   * "not read" (status "not confirmed", and why in error).
    */
-  rollback?: { at: string; steps: Array<{ kind: StepKind | "website-management"; name: string; id?: string; status: string; error?: string; answer?: string }> };
+  rollback?: { at: string; steps: Array<{ kind: StepKind | "website-management"; name: string; id?: string; status: string; error?: string; answer?: string; lookedUp?: "found" | "not found" | "not read" }> };
 }
 
 const PATHS: Record<StepKind, string> = {
@@ -180,7 +189,7 @@ export async function listBuilds(dataDir: string, tenantId: string): Promise<Bui
   const out: BuildRecord[] = [];
   for (const n of names.filter((n) => /^[0-9a-f-]{36}\.json$/.test(n))) {
     const text = await readText(path.join(dir, n), SECTION);
-    if (text) out.push(JSON.parse(text) as BuildRecord);
+    if (text) out.push(asRead(JSON.parse(text) as BuildRecord));
   }
   return out.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
@@ -189,7 +198,32 @@ export async function getBuild(dataDir: string, tenantId: string, id: string): P
   if (!/^[0-9a-f-]{36}$/.test(id)) throw new Error("Not a build ID.");
   const text = await readText(path.join(buildsDir(dataDir, tenantId), `${id}.json`), SECTION);
   if (!text) throw new Error("No such build.");
-  return JSON.parse(text) as BuildRecord;
+  return asRead(JSON.parse(text) as BuildRecord);
+}
+
+/** What each kind's name lookup reads, in the words a create's error uses. */
+const LOOKUP_WHERE: Record<StepKind, string> = { "site-list": "the tenant's site lists", profile: "the tenant's profiles", policy: "the tenant's Web Control policies" };
+
+/**
+ * A build record as saved, read the way v0.3.25 sees it. Before v0.3.24 a create Sophos didn't answer with a success,
+ * whose name lookup couldn't be read after, was saved as failed with no id: it's unconfirmed, with what Sophos said and
+ * why nothing was read, so the next build and a rollback look for it by name, and the build it stopped didn't fail.
+ * Before v0.3.25 a rollback skipped an unconfirmed step: a build with one left isn't rolled back, so it can be again.
+ * The file isn't changed.
+ */
+function asRead(r: BuildRecord): BuildRecord {
+  for (const s of r.steps) {
+    const was = s.status === "failed" && !s.id ? unreadCreateFrom(s.error, LOOKUP_WHERE[s.kind]) : null;
+    if (!was) continue;
+    s.status = "unconfirmed";
+    s.answer = was.answer;
+    s.readBack = "not-read";
+    s.readBackNote = was.unread;
+    delete s.error;
+    if (r.status === "failed") r.status = "partial";
+  }
+  if (r.status === "rolled-back" && r.steps.some((s) => s.status === "unconfirmed" && !s.id)) r.status = "rollback-partial";
+  return r;
 }
 
 /** Why a server can't go on the pilot: it's a Web Control policy, which applies to computers. */
@@ -296,9 +330,9 @@ export async function dryRun(dataDir: string, ctx: TenantContext, pilotIn: Pilot
   const recorded = asked.length ? await idsCreatedByTool(dataDir, t) : new Set<string>();
   const inTenant: Record<StepKind, Array<{ id: string; name: string }>> = { "site-list": lists, profile: profiles, policy: policies };
   for (const s of steps) {
-    const there = inTenant[s.kind].find((x) => x.name.toLowerCase() === s.name.toLowerCase());
-    const by = there && !recorded.has(there.id) && asked.find((a) => a.kind === s.kind && a.name === s.name.toLowerCase());
-    if (!there || !by) continue;
+    const by = asked.find((a) => a.kind === s.kind && a.name === s.name.toLowerCase());
+    const there = by && foundByName(inTenant[s.kind], s.name, recorded);
+    if (!by || !there) continue;
     s.found = { id: there.id, build: by.build };
     s.note = FOUND_NOTE;
   }
@@ -394,6 +428,41 @@ export async function dryRun(dataDir: string, ctx: TenantContext, pilotIn: Pilot
 
 /** The note on a step the dry run found by name (see BuildStep.found). */
 const FOUND_NOTE = "Found by name: an earlier build asked for it and Sophos didn't confirm it, so it's used, not made again.";
+
+/**
+ * What a create Sophos didn't confirm (unconfirmed, no id) asked for, found by name in what was read of the tenant: the
+ * object of that name, in any case, unless a record has its id, since then it's another run's. The next build, Allow
+ * and Create site lists use it; a rollback or an undo deletes it by that id.
+ */
+export function foundByName<T extends { id: string; name: string }>(inTenant: T[], name: string, recorded: ReadonlySet<string | undefined>): T | undefined {
+  const there = inTenant.find((x) => x.name.toLowerCase() === name.toLowerCase());
+  return there && !recorded.has(there.id) ? there : undefined;
+}
+
+/** What each kind's lookup by name reads, as the next build reads it. */
+const READ_ALL: Record<StepKind, (api: ReadOnlyApi, t: string) => Promise<Array<{ id: string; name: string }>>> = {
+  "site-list": (api, t) => listSiteLists(api, t),
+  profile: (api, t) => listProfiles(api, t),
+  policy: (api, t) => listPolicies(api, t, "web-control"),
+};
+
+/**
+ * Looks for what an unconfirmed create asked for by name, for a rollback or an undo (foundByName): found, with its id;
+ * not there (found undefined); or, when the tenant couldn't be read, why (unread), since that shows neither.
+ */
+export async function lookUpByName(api: TenantApi, tenantId: string, kind: StepKind, name: string, recorded: ReadonlySet<string | undefined>): Promise<{ found?: { id: string; name: string }; unread?: string }> {
+  try {
+    return { found: foundByName(await READ_ALL[kind](new ReadOnlyApi(api), tenantId), name, recorded) };
+  } catch (err) {
+    return { unread: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** What a rollback or an undo couldn't look for by name: the reason it gives, for a Detail line. */
+export function unreadLookUp(kind: StepKind, why: string): string {
+  const what = { "site-list": "site lists", profile: "profiles", policy: "Web Control policies" }[kind];
+  return `The tool couldn't read the tenant's ${what} to look for it by name (${why.replace(/\.$/, "")}), so it may be in the tenant.`;
+}
 
 /** A create that is sent once, read back by name when Sophos gives no clear answer (then kept in unclear), and audited with the id it made. */
 export async function auditedCreate<T extends { id: string }>(
@@ -618,7 +687,13 @@ export async function rollback(
   const api: TenantApi = ctx.client;
   const ro = new ReadOnlyApi(api);
   const t = ctx.tenantId;
-  const created = record.steps.filter((s) => s.id && s.status !== "deleted");
+  // An Allow of this build whose new list Sophos didn't confirm left no id either: the list is looked for by name too,
+  // as a step of the build. pilot-service imports this module, so it's loaded here, when it's needed.
+  const { askedAllowLists, settleAllowLists } = await import("./pilot-service.js");
+  const allows = await askedAllowLists(dataDir, t, record);
+  record.steps.push(...allows.steps);
+  // An unconfirmed step has no id: it's looked for by name in its place in the order, then deleted by the id found.
+  const created = record.steps.filter((s) => (s.id && s.status !== "deleted") || (s.status === "unconfirmed" && !s.id));
   const order: StepKind[] = ["policy", "profile", "site-list"];
   const toDelete = order.flatMap((k) => created.filter((s) => s.kind === k).reverse());
   let restorePlan: RestoreStep[] = [];
@@ -648,8 +723,29 @@ export async function rollback(
     profile: (id) => deleteProfile(api, t, id),
     "site-list": (id) => deleteSiteList(api, t, id),
   };
+  // The ids the next build leaves alone when it looks for a step by name; an Allow's list has its own (allows.recorded).
+  let builtIds: Set<string> | undefined;
   for (const s of toDelete) {
-    const entry = { tenantId: t, action: "delete", resource: s.kind, resourceId: s.id, detail: { name: s.name, rollbackOf: record.id } };
+    // Set when the step had no id and was found by name: what the rollback says of it.
+    let found: { lookedUp?: "found" } = {};
+    if (!s.id) {
+      const recorded = s.key.startsWith("pilot-allows-") ? allows.recorded : (builtIds ??= await idsCreatedByTool(dataDir, t));
+      const look = await lookUpByName(api, t, s.kind, s.name, recorded);
+      if (look.unread !== undefined) {
+        // Not read: it may or may not be there, so the rollback isn't confirmed, and the step stays unconfirmed.
+        out.push({ kind: s.kind, name: s.name, status: "not confirmed", lookedUp: "not read", error: unreadLookUp(s.kind, look.unread) });
+        continue;
+      }
+      if (!look.found) {
+        s.status = "not-found";
+        out.push({ kind: s.kind, name: s.name, status: "not there", lookedUp: "not found" });
+        continue;
+      }
+      s.id = look.found.id;
+      s.note = "Found by name by the rollback: Sophos didn't confirm it was made.";
+      found = { lookedUp: "found" };
+    }
+    const entry = { tenantId: t, action: "delete", resource: s.kind, resourceId: s.id, detail: { name: s.name, rollbackOf: record.id, ...(found.lookedUp ? { foundByName: true } : {}) } };
     // Set when the delete got no clear answer (a 5xx, no answer in time, or a dropped connection), which can come back for a delete that went through.
     let unclear: { said: string; reason: string } | undefined;
     // Set when Sophos answered 404, so the object was already gone. Audited below, with what the read-back found, to match the step.
@@ -674,7 +770,7 @@ export async function rollback(
         // Refused: this delete wasn't accepted, so there's no read-back to keep.
         delete s.deleteReadBack;
         delete s.deleteAnswer;
-        out.push({ kind: s.kind, name: s.name, id: s.id, status: "failed", error: message });
+        out.push({ kind: s.kind, name: s.name, id: s.id, status: "failed", error: message, ...found });
         continue;
       }
     }
@@ -699,21 +795,23 @@ export async function rollback(
     else delete s.deleteAnswer;
     if (unclear === undefined) {
       // A read that failed doesn't show it's still there, only that the delete isn't confirmed.
-      out.push(gone.value || !gone.unread ? { kind: s.kind, name: s.name, id: s.id, status: gone.value ? "deleted, 404 on read-back" : "still there after delete" } : { kind: s.kind, name: s.name, id: s.id, status: "not confirmed", error: read });
+      out.push(gone.value || !gone.unread ? { kind: s.kind, name: s.name, id: s.id, status: gone.value ? "deleted, 404 on read-back" : "still there after delete", ...found } : { kind: s.kind, name: s.name, id: s.id, status: "not confirmed", error: read, ...found });
       if (answered404 !== undefined) {
         await auditOrWarn(gone.value ? { ...entry, ok: true, detail: { ...entry.detail, note: "Sophos answered 404, so it was already gone, and a read-back found it gone (404)" } } : { ...entry, ok: false, error: `${answered404}. ${read}` });
       }
     } else if (gone.value) {
       const note = `${unclear.said}, then a read-back found it gone (404)`;
       await auditOrWarn({ ...entry, ok: true, detail: { ...entry.detail, note } });
-      out.push({ kind: s.kind, name: s.name, id: s.id, status: `deleted: ${note}` });
+      out.push({ kind: s.kind, name: s.name, id: s.id, status: `deleted: ${note}`, ...found });
     } else {
       const error = `${unclear.reason}. ${read}`;
       await auditOrWarn({ ...entry, ok: false, error });
       // Found still there, it failed. Not read, it may have gone through: not confirmed either way.
-      out.push({ kind: s.kind, name: s.name, id: s.id, status: gone.unread ? "not confirmed" : "failed", error });
+      out.push({ kind: s.kind, name: s.name, id: s.id, status: gone.unread ? "not confirmed" : "failed", error, ...found });
     }
   }
+  // An Allow whose list was looked for here: done with the build, or holding the list found until it's deleted.
+  if (record.steps.some((s) => s.key.startsWith("pilot-allows-asked-"))) await settleAllowLists(dataDir, t, record);
   // Whether a Website Management step reads back as the snapshot has it: an entry re-created or patched back, or one deleted gone (404).
   const restoredNow = async (step: RestoreStep): Promise<true | null> => {
     if (step.op === "delete") {
