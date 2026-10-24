@@ -13,7 +13,9 @@
  * accepted that the read-back didn't confirm is kept as not confirmed, and
  * can be undone like a confirmed one (category D). Each wave is marked as
  * sending, and saved, before its change goes, so a server that stops while
- * it's in flight leaves the wave not confirmed, as a build does.
+ * it's in flight leaves the wave not confirmed, as a build does. So is an
+ * undo's change: after a stop the undo is not confirmed, and Undo again reads
+ * the assignment first.
  */
 
 import { promises as fs } from "node:fs";
@@ -58,6 +60,9 @@ export const ALREADY_BEFORE = "assignment already as before the wave";
 /** Why a move isn't confirmed when the pilot policy couldn't be read back after it. */
 const MOVE_UNREAD = "The tool couldn't read the pilot policy back, so the move isn't confirmed.";
 
+/** The same for an undo. */
+const UNDO_UNREAD = "The tool couldn't read the pilot policy back, so the undo isn't confirmed.";
+
 export interface WaveRecord {
   id: string;
   at: string;
@@ -86,6 +91,8 @@ export interface WaveRecord {
    * was in flight when the server stopped, so the devices may have moved: it's read as unconfirmed (load).
    */
   sending?: boolean;
+  /** The same for an undo's change. A wave saved with it may have been put back: it's read as an undo not confirmed (load). */
+  undoSending?: boolean;
 }
 
 interface PromoteRecord {
@@ -113,6 +120,17 @@ async function load(dataDir: string, tenantId: string): Promise<PromoteRecord> {
     w.answer = IN_FLIGHT.answer;
     w.readBack = `not read: ${IN_FLIGHT.unread}`;
     w.error = MOVE_UNREAD;
+  }
+  // A wave whose undo was in flight (undoSending) may be back as it was: the undo isn't confirmed, in the state an undo
+  // Sophos gave no clear answer to is in when nothing could be read after, so Undo again reads the assignment first, and
+  // says so when the devices are already back. The file isn't changed.
+  for (const w of r.waves) {
+    if (!w.undoSending) continue;
+    delete w.undoSending;
+    w.status = "undo-failed";
+    w.undoAnswer = IN_FLIGHT.answer;
+    w.undoReadBack = `not read: ${IN_FLIGHT.unread}`;
+    w.error = UNDO_UNREAD;
   }
   return r;
 }
@@ -336,6 +354,9 @@ export async function undoWave(dataDir: string, ctx: TenantContext, waveId: stri
     if (!already) {
       if (!same(current, wave.after)) throw new Error("The pilot's assignment has changed since this wave, so it wasn't put back. Check it in Sophos Fusion.");
       const body = { appliesTo: appliesToFor({ endpoints: wave.before.endpoints, endpointGroups: wave.before.endpointGroups }) };
+      // Marked and saved before the change goes, so a server that stops before its outcome is recorded leaves the undo as sent (load).
+      wave.undoSending = true;
+      await save(dataDir, record);
       // A 5xx or no answer can still have gone through, so it's read back like a 2xx; a refusal is thrown.
       const { unclear } = await sendChecked(() => auditedWrite({ tenantId: t }, "update", "policy", wave.policyId, () => patchPolicy(api, t, wave.policyId, body), { undoWave: wave.id, removed: wave.devices.map((d) => d.hostname) }));
       const back = await readBack(async () => {
@@ -347,7 +368,7 @@ export async function undoWave(dataDir: string, ctx: TenantContext, waveId: stri
         // Sophos accepted the undo (or gave no clear answer and nothing could be read), but the read-back didn't confirm it.
         wave.undoReadBack = back.unread ? `not read: ${back.unread}` : "assignment differs";
         if (unclear) wave.undoAnswer = unclear.reason.replace(/\.$/, "");
-        throw new Error(back.unread ? "The tool couldn't read the pilot policy back, so the undo isn't confirmed." : "The policy didn't read back with the earlier assignment.");
+        throw new Error(back.unread ? UNDO_UNREAD : "The policy didn't read back with the earlier assignment.");
       }
       if (unclear) await auditOrWarn({ tenantId: t, action: "update", resource: "policy", resourceId: wave.policyId, ok: true, detail: { undoWave: wave.id, note: foundNote(unclear, "the assignment as it was before the wave", "on the pilot") } });
     }
@@ -360,6 +381,8 @@ export async function undoWave(dataDir: string, ctx: TenantContext, waveId: stri
     wave.status = "undo-failed";
     wave.error = err instanceof Error ? err.message : String(err);
   }
+  // The outcome is recorded: nothing is in flight.
+  delete wave.undoSending;
   await save(dataDir, record);
   return wave;
 }

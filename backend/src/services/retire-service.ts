@@ -23,7 +23,10 @@
  * from the record, patched ones put back), then the policies' tags.settings,
  * so no policy names a tag before its entries exist. A re-created entry gets
  * a new id; the snapshot comparison matches Website Management by URL. Each
- * restore write is read back the same way as the retire's, a 5xx included.
+ * restore write is read back the same way as the retire's, a 5xx included,
+ * and marked as sending, and saved, before it goes, so a server that stops
+ * while one is in flight leaves the restore not finished and that step not
+ * confirmed. Restore again looks the entry up first, as it always does.
  *
  * The tool warns, and asks for a confirmation, while devices still depend on
  * the tags: devices that can't use profiles keep classic settings, and an
@@ -88,6 +91,7 @@ export type DoneStep = RetireStep & {
   /**
    * Set, and saved, just before the step's write is sent, and cleared once its outcome is recorded. A step saved with it
    * and still planned was in flight when the server stopped, so the write may have gone through: it's read as unconfirmed.
+   * One saved with it after the retire sent it was a restore's write in flight: it's read as a restore not confirmed.
    */
   sending?: boolean;
 };
@@ -138,6 +142,13 @@ export function asSavedNow(r: RetireRecord): RetireRecord {
       s.answer = IN_FLIGHT.answer;
       s.readBack = `not read: ${IN_FLIGHT.unread}`;
       s.error = unconfirmed(s.readBack, "change");
+    } else if (s.sending) {
+      // The same for a restore's write, so the restore didn't finish, and Restore puts it back again.
+      s.status = "restore-failed";
+      s.answer = IN_FLIGHT.answer;
+      s.readBack = `not read: ${IN_FLIGHT.unread}`;
+      s.error = unconfirmed(s.readBack, "restore");
+      r.status = "restore-partial";
     }
     delete s.sending;
     if (s.status === "failed" && s.readBack) s.status = "unconfirmed";
@@ -379,6 +390,12 @@ export async function restoreRetire(dataDir: string, ctx: TenantContext, id: str
   delete record.tagsMayRemain;
   const api: TenantApi = ctx.client;
   const ro = new ReadOnlyApi(api);
+  /** Marks the step's write about to go, and saves the restore so far, not finished, before it goes (asSavedNow). */
+  const sending = async (step: DoneStep): Promise<void> => {
+    step.sending = true;
+    record.status = "restore-partial";
+    await saveRec(dataDir, record);
+  };
   // A failed step may or may not have reached Sophos, and an unconfirmed one may have; putting either back is safe.
   const done = record.steps.filter((s) => s.status === "done" || s.status === "unconfirmed" || s.status === "failed" || s.status === "restore-failed");
   const order = [...done.filter((s) => s.op === "delete-entry"), ...done.filter((s) => s.op === "patch-entry"), ...done.filter((s) => s.op === "policy-tags")];
@@ -399,6 +416,7 @@ export async function restoreRetire(dataDir: string, ctx: TenantContext, id: str
           step.readBack = "already there";
         } else {
           const body = { url: e.url, ...(e.tags?.length ? { tags: e.tags } : {}), ...(e.categoryId !== undefined ? { categoryId: e.categoryId } : {}), ...(e.comment ? { comment: e.comment } : {}) };
+          await sending(step);
           const made = await auditedCreate(
             t,
             "local-site",
@@ -428,6 +446,7 @@ export async function restoreRetire(dataDir: string, ctx: TenantContext, id: str
           }
         }
       } else if (step.op === "patch-entry") {
+        await sending(step);
         ({ unclear } = await sendChecked(() => auditedWrite({ tenantId: t }, "restore-patch", "local-site", step.id, () => patchLocalSite(api, t, step.id, { tags: step.before }), { restoreOf: record.id, url: step.url })));
         const back = await readBack(async () => {
           const s = await getLocalSite(ro, t, step.id);
@@ -436,6 +455,7 @@ export async function restoreRetire(dataDir: string, ctx: TenantContext, id: str
         step.readBack = back.value ? "tags match" : back.unread ? `not read: ${back.unread}` : "tags differ";
       } else {
         const body = { settings: { [TAGS_KEY]: { value: step.before } } };
+        await sending(step);
         ({ unclear } = await sendChecked(() => auditedWrite({ tenantId: t }, "restore-tags", "policy", step.policyId, () => patchPolicy(api, t, step.policyId, body), { restoreOf: record.id })));
         const back = await readBack(async () => {
           const p = await getPolicy(ro, t, step.policyId);
@@ -462,6 +482,8 @@ export async function restoreRetire(dataDir: string, ctx: TenantContext, id: str
       step.status = "restore-failed";
       step.error = err instanceof Error ? err.message : String(err);
     }
+    // The outcome is recorded: nothing is in flight.
+    delete step.sending;
     await saveRec(dataDir, record);
   }
   record.status = record.steps.every((s) => s.status === "restored" || s.status === "planned") ? "restored" : "restore-partial";
