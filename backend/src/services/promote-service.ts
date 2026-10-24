@@ -11,7 +11,9 @@
  * promoted in Sophos Fusion by user group instead. Each wave can be undone,
  * which puts the assignment back as it was before that wave. A move Sophos
  * accepted that the read-back didn't confirm is kept as not confirmed, and
- * can be undone like a confirmed one (category D).
+ * can be undone like a confirmed one (category D). Each wave is marked as
+ * sending, and saved, before its change goes, so a server that stops while
+ * it's in flight leaves the wave not confirmed, as a build does.
  */
 
 import { promises as fs } from "node:fs";
@@ -27,7 +29,7 @@ import { deviceEligibility } from "../domain/eligibility.js";
 import { canonicalJson } from "../domain/snapshot.js";
 import { auditedWrite, auditOrWarn } from "./audit-log.js";
 import { activePilot, type PilotInfo } from "./pilot-service.js";
-import { serverRefusal } from "./build-service.js";
+import { IN_FLIGHT, serverRefusal } from "./build-service.js";
 import { foundNote, readBack, sendChecked } from "./write-check.js";
 import { readText, saveFile } from "./safe-files.js";
 
@@ -53,6 +55,9 @@ export const WAVE_UNDOABLE: ReadonlyArray<WaveRecord["status"]> = ["moved", "unc
 /** What a wave undo records when the assignment was already as it was before the wave, so nothing was sent. */
 export const ALREADY_BEFORE = "assignment already as before the wave";
 
+/** Why a move isn't confirmed when the pilot policy couldn't be read back after it. */
+const MOVE_UNREAD = "The tool couldn't read the pilot policy back, so the move isn't confirmed.";
+
 export interface WaveRecord {
   id: string;
   at: string;
@@ -76,6 +81,11 @@ export interface WaveRecord {
   undoAnswer?: string;
   error?: string;
   undoneAt?: string;
+  /**
+   * Set, and saved, just before the move's change is sent, and cleared once its outcome is recorded. A wave saved with it
+   * was in flight when the server stopped, so the devices may have moved: it's read as unconfirmed (load).
+   */
+  sending?: boolean;
 }
 
 interface PromoteRecord {
@@ -93,6 +103,17 @@ async function load(dataDir: string, tenantId: string): Promise<PromoteRecord> {
   const r = text ? (JSON.parse(text) as PromoteRecord) : { tenantId, waves: [] };
   // Before v0.3.20 a move Sophos accepted that the read-back didn't confirm was saved as failed, with its read-back.
   for (const w of r.waves) if (w.status === "failed" && w.readBack) w.status = "unconfirmed";
+  // A wave whose move was in flight when the server stopped (sending) may have moved: not confirmed, in the state a move
+  // Sophos gave no clear answer to is in when nothing could be read after, so Undo reads the assignment first. The file
+  // isn't changed.
+  for (const w of r.waves) {
+    if (!w.sending) continue;
+    delete w.sending;
+    w.status = "unconfirmed";
+    w.answer = IN_FLIGHT.answer;
+    w.readBack = `not read: ${IN_FLIGHT.unread}`;
+    w.error = MOVE_UNREAD;
+  }
   return r;
 }
 
@@ -256,6 +277,9 @@ export async function moveWave(dataDir: string, ctx: TenantContext, deviceIds: s
   record.waves.unshift(wave);
   try {
     const body = { appliesTo: appliesToFor({ endpoints: preview.after.endpoints, endpointGroups: preview.after.endpointGroups }) };
+    // On record, marked, before the change goes, so a server that stops before its outcome is recorded leaves it as sent (load).
+    wave.sending = true;
+    await save(dataDir, record);
     // A 5xx or no answer can still have gone through, so it's read back like a 2xx; a refusal is thrown.
     const { unclear } = await sendChecked(() => auditedWrite({ tenantId: t }, "update", "policy", pilot.policyId, () => patchPolicy(api, t, pilot.policyId, body), { wave: wave.id, added: preview.devices.map((d) => d.hostname) }));
     const back = await readBack(async () => {
@@ -276,11 +300,12 @@ export async function moveWave(dataDir: string, ctx: TenantContext, deviceIds: s
       wave.readBack = back.unread ? `not read: ${back.unread}` : "assignment differs";
       // How Sophos answered when it wasn't a success: the page then doesn't say Sophos accepted the move.
       if (unclear) wave.answer = unclear.reason.replace(/\.$/, "");
-      wave.error = back.unread ? "The tool couldn't read the pilot policy back, so the move isn't confirmed." : "The policy read back without the new devices.";
+      wave.error = back.unread ? MOVE_UNREAD : "The policy read back without the new devices.";
     }
   } catch (err) {
     wave.error = err instanceof Error ? err.message : String(err);
   }
+  delete wave.sending;
   await save(dataDir, record);
   return wave;
 }

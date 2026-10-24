@@ -15,6 +15,9 @@
  * change, the entries with those tags are still deleted or untagged, so the
  * record lists each policy that may still name a tag whose entries it took
  * (tagsMayRemain): a policy that names a tag with no entries can't be saved.
+ * Each step is marked as sending, and saved, before its write goes, so a
+ * server that stops while one is in flight leaves it not confirmed, as a
+ * build does, and Restore puts it back too.
  *
  * Restore runs the other way round: entries first (deleted ones re-created
  * from the record, patched ones put back), then the policies' tags.settings,
@@ -40,7 +43,7 @@ import { settingValue, targetCount, targetsOf, usesWebProfile, type InventoryTen
 import { deviceEligibility } from "../domain/eligibility.js";
 import { canonicalJson } from "../domain/snapshot.js";
 import { auditedWrite, auditOrWarn } from "./audit-log.js";
-import { auditedCreate } from "./build-service.js";
+import { IN_FLIGHT, auditedCreate } from "./build-service.js";
 import { listSnapshots, loadSnapshot } from "./snapshot-store.js";
 import { runReadiness } from "./readiness.js";
 import { UnreadAfterWriteError, foundNote, readBack, sendChecked, type UnclearWriteError } from "./write-check.js";
@@ -82,6 +85,11 @@ export type DoneStep = RetireStep & {
   entry?: LocalSite;
   /** For a re-created entry: its new id. */
   newId?: string;
+  /**
+   * Set, and saved, just before the step's write is sent, and cleared once its outcome is recorded. A step saved with it
+   * and still planned was in flight when the server stopped, so the write may have gone through: it's read as unconfirmed.
+   */
+  sending?: boolean;
 };
 
 export interface RetireRecord {
@@ -122,6 +130,16 @@ async function saveRec(dataDir: string, r: RetireRecord): Promise<void> {
  */
 export function asSavedNow(r: RetireRecord): RetireRecord {
   for (const s of r.steps) {
+    // A step whose write was in flight when the server stopped (sending) may have gone through: not confirmed, in the
+    // state a write Sophos gave no clear answer to is in when nothing could be read after, so Restore puts it back. The
+    // file isn't changed.
+    if (s.status === "planned" && s.sending) {
+      s.status = "unconfirmed";
+      s.answer = IN_FLIGHT.answer;
+      s.readBack = `not read: ${IN_FLIGHT.unread}`;
+      s.error = unconfirmed(s.readBack, "change");
+    }
+    delete s.sending;
     if (s.status === "failed" && s.readBack) s.status = "unconfirmed";
     if (s.status === "restore-failed" && s.readBack && s.error && !/^(Read back: |The tool couldn't read it back)/.test(s.error)) delete s.readBack;
   }
@@ -271,6 +289,9 @@ export async function retire(dataDir: string, ctx: TenantContext, tags: string[]
       let unclear: UnclearWriteError | undefined;
       let resource = "local-site";
       let resourceId = "";
+      // Marked and saved before its write goes, so a server that stops before its outcome is recorded leaves it as sent (asSavedNow).
+      step.sending = true;
+      await saveRec(dataDir, record);
       if (step.op === "policy-tags") {
         const body = { settings: { [TAGS_KEY]: { value: step.after } } };
         [resource, resourceId] = ["policy", step.policyId];
@@ -314,6 +335,7 @@ export async function retire(dataDir: string, ctx: TenantContext, tags: string[]
       step.error = err instanceof Error ? err.message : String(err);
       break;
     } finally {
+      delete step.sending;
       await saveRec(dataDir, record);
     }
   }
