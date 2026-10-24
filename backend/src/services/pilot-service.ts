@@ -16,7 +16,9 @@
  * clear answer to, with the site lists unread after, is kept as unconfirmed:
  * the next Allow looks for it by name, and uses it if it's there. Each write
  * is marked as sending, and saved, before it goes, so a server that stops
- * while one is in flight leaves the entry not confirmed, as a build does.
+ * while one is in flight leaves the entry not confirmed, as a build does. So
+ * is each write of an undo: after a stop the undo is not confirmed, and Undo
+ * again finishes it, or finds the site or the list already gone.
  */
 
 import { promises as fs } from "node:fs";
@@ -181,6 +183,8 @@ export interface AllowEntry {
    * when the server stopped, so the write may have gone through: it's read as not confirmed (loadPilotRecord).
    */
   sending?: boolean;
+  /** The same for a write of an undo (the unlink, the list's delete or the site's). An entry saved with it is read as an undo not confirmed. */
+  undoSending?: boolean;
 }
 
 interface PilotRecord {
@@ -236,6 +240,17 @@ export async function loadPilotRecord(dataDir: string, tenantId: string): Promis
       a.status = "added";
       a.readBack = `not read: ${IN_FLIGHT.unread}`;
     }
+  }
+  // An entry whose undo had a write in flight (undoSending) may be undone: the undo isn't confirmed, in the state an undo
+  // Sophos gave no clear answer to is in when nothing could be read after, so Undo again reads the list first, and
+  // finishes when the site or the list is already gone. The file isn't changed.
+  for (const a of r.allows) {
+    if (!a.undoSending) continue;
+    delete a.undoSending;
+    a.status = "undo-failed";
+    a.undoAnswer = IN_FLIGHT.answer;
+    a.undoReadBack = `not read: ${IN_FLIGHT.unread}`;
+    a.error = "The tool couldn't read it back, so the undo isn't confirmed.";
   }
   return r;
 }
@@ -628,6 +643,11 @@ export async function undoAllow(dataDir: string, ctx: TenantContext, allowId: st
   // Only this attempt's read-back counts.
   delete entry.undoReadBack;
   delete entry.undoAnswer;
+  /** Marks a write of the undo about to go, and saves the record before it goes, so a server that stops before the outcome is recorded leaves the undo as sent (loadPilotRecord). */
+  const sending = async (): Promise<void> => {
+    entry.undoSending = true;
+    await savePilotRecord(dataDir, record);
+  };
   try {
     const sites = await listSites(ro, t, listId).catch((err: unknown) => {
       if (retry && errorStatus(err) === 404) return null;
@@ -647,6 +667,7 @@ export async function undoAllow(dataDir: string, ctx: TenantContext, allowId: st
         const body = profilePutBody(p);
         body.siteListActions = (p.siteListActions ?? []).filter((a) => a.id !== listId);
         body.filterBySiteList = (body.siteListActions as unknown[]).length ? true : creator.profileBefore?.filterBySiteList ?? false;
+        await sending();
         // A 5xx or no answer can still have gone through, so it's read back like a 2xx; a refusal is thrown.
         const { unclear } = await sendChecked(() => auditedWrite({ tenantId: t }, "update", "profile", entry.profileId, () => replaceProfile(api, t, entry.profileId, body), { unlinkList: listId, undo: entry.id }));
         const back = await readBack(async () => {
@@ -660,6 +681,7 @@ export async function undoAllow(dataDir: string, ctx: TenantContext, allowId: st
         notes.push(back.value ? "Profile read back without the list." : back.unread ? "The profile couldn't be read back, so the unlink isn't confirmed." : "Profile still shows the list.");
         if (unclear && back.unread) entry.undoAnswer = unclear.reason.replace(/\.$/, "");
       }
+      await sending();
       // A 404 was already gone; a 5xx or no answer can still have gone through. The read-back settles both, as in a rollback.
       const { unclear } = await sendChecked(() =>
         auditedWrite({ tenantId: t }, "delete", "site-list", listId, () => deleteSiteList(api, t, listId), { name: entry.listName, undo: entry.id }).catch((err: unknown) => {
@@ -695,6 +717,7 @@ export async function undoAllow(dataDir: string, ctx: TenantContext, allowId: st
     } else {
       const siteId = entry.siteId ?? sites.find((s) => s.site.toLowerCase() === entry.site)?.id;
       if (!siteId) throw new Error(`${entry.site} isn't in the list any more.`);
+      await sending();
       // A 5xx or no answer can still have gone through: the read-back settles it.
       const { unclear } = await sendChecked(() => auditedWrite({ tenantId: t }, "delete-site", "site-list", listId, () => deleteSite(api, t, listId, siteId), { site: entry.site, undo: entry.id }));
       const back = await readBack(async () => ((await listSites(ro, t, listId)).some((s) => s.site.toLowerCase() === entry.site) ? null : true));
@@ -716,6 +739,8 @@ export async function undoAllow(dataDir: string, ctx: TenantContext, allowId: st
     entry.error = err instanceof Error ? err.message : String(err);
   }
   entry.undo = notes;
+  // The outcome is recorded: nothing is in flight.
+  delete entry.undoSending;
   await savePilotRecord(dataDir, record);
   return entry;
 }
@@ -733,8 +758,9 @@ export async function askedAllowLists(dataDir: string, tenantId: string, build: 
   const steps: BuildStep[] = [];
   for (const a of record.allows) {
     if (a.status !== "unconfirmed" || a.listId || a.buildId !== build.id || !a.listName) continue;
-    // One step a name: a rollback before this one that couldn't look may have added it already.
-    if ([...build.steps, ...steps].some((s) => s.kind === "site-list" && s.status === "unconfirmed" && !s.id && s.name.toLowerCase() === a.listName.toLowerCase())) continue;
+    // One step a name: a rollback before this one that couldn't look may have added it already, or one that stopped
+    // before it settled the entry may have found the list (the step has its id), and this one deletes it by that id.
+    if ([...build.steps, ...steps].some((s) => s.kind === "site-list" && s.name.toLowerCase() === a.listName.toLowerCase() && ((s.status === "unconfirmed" && !s.id) || (s.key.startsWith(ASKED_KEY) && !!s.id)))) continue;
     const order = build.steps.length + steps.length + 1;
     steps.push({
       order,

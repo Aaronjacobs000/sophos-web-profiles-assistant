@@ -26,6 +26,9 @@
  *             for it by name, as the next build does: found, it's deleted
  *             by that id; not there, there's nothing to remove; not read,
  *             the rollback isn't confirmed. So is an Allow's new list.
+ *             Each write is marked as sending, and the rollback saved so
+ *             far, before it goes, so a server that stops part way leaves
+ *             the rollback not finished and that write not confirmed.
  *
  * Deletes go only to ids this tool recorded, or found by name for a create
  * Sophos didn't confirm that no record has the id of; never by name alone:
@@ -112,6 +115,7 @@ export interface BuildStep {
   /**
    * Set, and saved, just before the step's create is sent, and cleared once its outcome is recorded. A step saved with
    * it and still planned was in flight when the server stopped, so it may have been made: it's read as unconfirmed.
+   * Set on a step with an id, it's a rollback's delete that was in flight: read as a delete not confirmed.
    */
   sending?: boolean;
   /**
@@ -170,7 +174,7 @@ export interface BuildRecord {
    * rollback looked for by name: "found" (then deleted by its id, as status says), "not found" (status "not there") or
    * "not read" (status "not confirmed", and why in error).
    */
-  rollback?: { at: string; steps: Array<{ kind: StepKind | "website-management"; name: string; id?: string; status: string; error?: string; answer?: string; lookedUp?: "found" | "not found" | "not read" }> };
+  rollback?: { at: string; steps: Array<{ kind: StepKind | "website-management"; name: string; id?: string; status: string; error?: string; answer?: string; lookedUp?: "found" | "not found" | "not read"; sending?: boolean }> };
 }
 
 const PATHS: Record<StepKind, string> = {
@@ -223,10 +227,22 @@ export const IN_FLIGHT = { answer: "The tool stopped before it saved what Sophos
  * why nothing was read, so the next build and a rollback look for it by name, and the build it stopped didn't fail.
  * Before v0.3.25 a rollback skipped an unconfirmed step: a build with one left isn't rolled back, so it can be again.
  * A step whose create was in flight when the server stopped (sending) is unconfirmed too: Sophos may have made it.
- * The file isn't changed.
+ * A rollback's delete, or Website Management change, in flight then is not confirmed, so the rollback didn't finish,
+ * and rolling back again deletes it, or finds it already gone (404). The file isn't changed.
  */
 function asRead(r: BuildRecord): BuildRecord {
   for (const s of r.steps) {
+    if (s.sending && s.id) {
+      // In the state a delete Sophos gave no clear answer to is in when nothing could be read after.
+      delete s.sending;
+      s.status = "delete-failed";
+      s.deleteReadBack = `not read: ${IN_FLIGHT.unread}`;
+      s.deleteAnswer = IN_FLIGHT.answer;
+      delete s.deleteError;
+      r.status = "rollback-partial";
+      r.rollback?.steps.push({ kind: s.kind, name: s.name, id: s.id, status: "not confirmed", error: `${IN_FLIGHT.answer}. A read-back couldn't read it (${IN_FLIGHT.unread}), so it may still be there.` });
+      continue;
+    }
     if (s.status === "planned" && s.sending && !s.id) {
       s.status = "unconfirmed";
       s.answer = IN_FLIGHT.answer;
@@ -245,6 +261,14 @@ function asRead(r: BuildRecord): BuildRecord {
     if (r.status === "failed") r.status = "partial";
   }
   if (r.status === "rolled-back" && r.steps.some((s) => s.status === "unconfirmed" && !s.id)) r.status = "rollback-partial";
+  for (const o of r.rollback?.steps ?? []) {
+    if (!o.sending) continue;
+    // A Website Management change, in the state one Sophos gave no clear answer to is in when nothing could be read after.
+    delete o.sending;
+    o.answer = IN_FLIGHT.answer;
+    o.error = `${IN_FLIGHT.answer}. A read-back couldn't read Website Management (${IN_FLIGHT.unread}), so the change isn't confirmed.`;
+    r.status = "rollback-partial";
+  }
   return r;
 }
 
@@ -746,6 +770,21 @@ export async function rollback(
   if (opts.dryRun) return { ...record, restorePlan, ...refused };
 
   const out: NonNullable<BuildRecord["rollback"]>["steps"] = [];
+  const at = new Date().toISOString();
+  /**
+   * Saves the rollback so far, not finished, before each write goes and once its outcome is recorded, so a server that
+   * stops part way leaves what was deleted on record and the write in flight (sending) not confirmed (asRead).
+   */
+  const progress = async (): Promise<void> => {
+    record.rollback = { at, steps: out };
+    record.status = "rollback-partial";
+    await saveRecord(dataDir, record);
+  };
+  /** The step's outcome is recorded: it has no write in flight. */
+  const settled = async (s: BuildStep): Promise<void> => {
+    delete s.sending;
+    await progress();
+  };
   const getter: Record<StepKind, (id: string) => Promise<unknown>> = {
     policy: (id) => getPolicy(ro, t, id),
     profile: (id) => getProfile(ro, t, id),
@@ -785,6 +824,8 @@ export async function rollback(
     let answered404: string | undefined;
     // What an Allow undo found before is over: this rollback's outcome is in out.
     delete s.deleteError;
+    s.sending = true;
+    await progress();
     try {
       await deleter[s.kind](s.id!);
       await auditOrWarn({ ...entry, ok: true });
@@ -804,6 +845,7 @@ export async function rollback(
         delete s.deleteReadBack;
         delete s.deleteAnswer;
         out.push({ kind: s.kind, name: s.name, id: s.id, status: "failed", error: message, ...found });
+        await settled(s);
         continue;
       }
     }
@@ -842,6 +884,7 @@ export async function rollback(
       // Found still there, it failed. Not read, it may have gone through: not confirmed either way.
       out.push({ kind: s.kind, name: s.name, id: s.id, status: gone.unread ? "not confirmed" : "failed", error, ...found });
     }
+    await settled(s);
   }
   // An Allow whose list was looked for here: done with the build, or holding the list found until it's deleted.
   if (record.steps.some((s) => s.key.startsWith("pilot-allows-asked-"))) await settleAllowLists(dataDir, t, record);
@@ -861,6 +904,10 @@ export async function rollback(
   };
   for (const step of restorePlan) {
     const name = `${step.op} ${step.url}`;
+    // On record before its write goes, so a server that stops before its outcome is recorded leaves it not confirmed (asRead).
+    const sending = { kind: "website-management" as const, name, status: "not confirmed", sending: true };
+    out.push(sending);
+    await progress();
     try {
       // A 5xx or no answer can still have gone through, so it's read back, as a delete is; a refusal is thrown.
       const { unclear } = await sendChecked<unknown>(() =>
@@ -888,6 +935,10 @@ export async function rollback(
       }
     } catch (err) {
       out.push({ kind: "website-management", name, status: "failed", error: err instanceof Error ? err.message : String(err) });
+    } finally {
+      // The outcome is recorded in its place.
+      out.splice(out.indexOf(sending), 1);
+      await progress();
     }
   }
   if (restoreRefused) out.push({ kind: "website-management", name: "Website Management from the snapshot", status: "failed", error: restoreRefused });

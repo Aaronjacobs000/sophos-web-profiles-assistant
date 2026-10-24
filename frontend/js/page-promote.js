@@ -82,7 +82,8 @@ function retireOutcome(r) {
   const refused = bad.find((x) => !x.readBack);
   const accepted = r.steps.some((x) => x.status === (restoring ? "restored" : "done") || (bad.includes(x) && x.readBack));
   // A retire stops at a step Sophos refused, so the steps after it were never sent. It goes on past one it couldn't confirm.
-  const unsent = !restoring && r.steps.some((x) => x.status === "planned");
+  // A restore goes on past both, so a step it hasn't put back yet means the server stopped part way.
+  const unsent = restoring ? r.steps.some((x) => ["done", "unconfirmed", "failed"].includes(x.status)) : r.steps.some((x) => x.status === "planned");
   const unanswered = bad.filter((x) => x.readBack && x.answer);
   const first = refused ?? unanswered[0] ?? bad[0];
   const why = !first ? "" : refused ? sentence(first.error ?? "") : first.answer ? unansweredReason(first.answer, first.readBack, first.error) : unconfirmedReason(first.readBack, first.error);
