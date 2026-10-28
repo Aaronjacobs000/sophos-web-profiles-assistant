@@ -25,6 +25,11 @@ function clientError(err: unknown): { status: number; type?: string } | undefine
   return type || e.expose === true ? { status, type } : undefined;
 }
 
+/** Express's error for a route parameter that isn't valid percent encoding: a URIError it marks 400. Its message quotes the parameter. */
+function badPathParam(err: unknown): boolean {
+  return err instanceof URIError && (err as { status?: unknown }).status === 400;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function errorHandler(
   err: unknown,
@@ -32,6 +37,13 @@ export function errorHandler(
   res: Response,
   _next: NextFunction,
 ): void {
+  if (badPathParam(err)) {
+    // The path holds the parameter, so the log line leaves it out.
+    log.warn(`[${req.method}] 400 path parameter not valid`);
+    if (res.headersSent) return;
+    res.status(400).json({ error: "bad_request", message: "The request path isn't valid." });
+    return;
+  }
   const client = clientError(err);
   if (client) {
     log.warn(`[${req.method} ${req.path}] ${client.status} ${client.type ?? "unreadable request"}`);
