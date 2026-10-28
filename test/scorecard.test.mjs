@@ -120,7 +120,7 @@ test("logging off, threat-check web exclusions, schedules and decryption exclusi
     inventory({
       webControlPolicies: ok([
         wcPolicy({ name: "Quiet", appliesTo: { users: ["u1"], userGroups: [] }, settings: { "endpoint.web-control.web-monitoring.enabled": { value: "no" }, "endpoint.web-control.schedule.enabled": { value: true } } }),
-        wcPolicy({ name: "Profiled", priority: 2, appliesTo: { users: ["u2"], userGroups: [] }, settings: { "endpoint.web-control.web-profile.enabled": { value: true }, "endpoint.web-control.web-profile-log-web-events.enabled": { value: false }, "endpoint.web-control.web-profile-id": { value: "gone" } } }),
+        wcPolicy({ name: "Profiled", priority: 2, appliesTo: { users: ["u2"], userGroups: [] }, settings: { "endpoint.web-control.web-profile.enabled": { value: true }, "endpoint.web-control.filter-by-web-profile.enabled": { value: true }, "endpoint.web-control.web-profile-log-web-events.enabled": { value: false }, "endpoint.web-control.web-profile-id": { value: "gone" } } }),
       ]),
       threatProtectionPolicies: ok([tpPolicy({ settings: { "endpoint.threat-protection.exclusions.scanning": { value: [{ value: "files.contoso.example", type: "web" }] } } })]),
       scanningExclusions: ok([{ id: "x", type: "web", value: "203.0.113.0/24" }, { id: "y", type: "path", value: "C:\\temp\\" }]),

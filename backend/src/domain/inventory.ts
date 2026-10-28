@@ -89,9 +89,19 @@ export function isBasePolicy(policy: Policy): boolean {
   return policy.priority === 0 || policy.name === "Base Policy";
 }
 
-/** True when a Web Control policy filters with a web filtering profile rather than classic settings. */
+/**
+ * True when a Web Control policy filters with a web filtering profile rather than classic settings: the three
+ * settings the Web Filtering API guide sets together are all set. A policy the API creates holds
+ * web-profile.enabled true with filtering by profile off and no profile, so that setting alone isn't enough.
+ */
 export function usesWebProfile(policy: Policy): boolean {
-  return settingValue<boolean>(policy, "endpoint.web-control.web-profile.enabled") === true;
+  const profileId = settingValue<string>(policy, "endpoint.web-control.web-profile-id");
+  return (
+    settingValue<boolean>(policy, "endpoint.web-control.web-profile.enabled") === true &&
+    settingValue<boolean>(policy, "endpoint.web-control.filter-by-web-profile.enabled") === true &&
+    typeof profileId === "string" &&
+    profileId.trim() !== ""
+  );
 }
 
 export interface Targets {
