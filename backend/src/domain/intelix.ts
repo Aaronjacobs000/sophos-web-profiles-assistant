@@ -56,6 +56,21 @@ export class IntelixError extends Error {
   }
 }
 
+/**
+ * Intelix calls go out with redirect: "manual", and a redirect is refused
+ * instead of followed: following it sends the request again, with the
+ * credential or the token, to another address. In a browser a redirect not
+ * followed reads as type "opaqueredirect" with status 0; in Node it keeps its
+ * 3xx status.
+ */
+function refuseRedirect(res: Response): void {
+  if (res.type !== "opaqueredirect" && (res.status < 300 || res.status > 399)) return;
+  throw new IntelixError(
+    `Intelix answered with a redirect${res.status ? ` (${res.status})` : ""}. Redirects are never followed, so nothing was sent there.`,
+    res.status || undefined,
+  );
+}
+
 function base64(text: string): string {
   if (typeof btoa === "function") return btoa(text);
   throw new Error("No base64 encoder available.");
@@ -117,7 +132,9 @@ export class IntelixClient {
         "Content-Type": "application/x-www-form-urlencoded",
       },
       body: "grant_type=client_credentials",
+      redirect: "manual",
     });
+    refuseRedirect(res);
     const body = (await res.json().catch(() => ({}))) as { access_token?: string; expires_in?: number; error?: string };
     if (!res.ok || !body.access_token) {
       throw new IntelixError(`Intelix refused the credential (${res.status}${body.error ? `: ${body.error}` : ""}).`, res.status);
@@ -133,7 +150,8 @@ export class IntelixClient {
     let refreshed = false;
     for (let attempt = 0; attempt < 4; attempt++) {
       const token = await this.getToken();
-      const res = await this.fetchImpl(endpoint, { headers: { Authorization: token } });
+      const res = await this.fetchImpl(endpoint, { headers: { Authorization: token }, redirect: "manual" });
+      refuseRedirect(res);
       if (res.status === 401 && !refreshed) {
         refreshed = true;
         this.token = null;
