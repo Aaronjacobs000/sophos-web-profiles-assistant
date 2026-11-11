@@ -29,7 +29,7 @@ import {
 import { PRESET_LABELS } from "./categories-data.js";
 import { DESCRIPTION_MAX, finalAction, finalVerdict, fitName, SITES_PER_LIST, type CleanupResult } from "./cleanup.js";
 import { parseSite } from "./sites.js";
-import { isBasePolicy, settingValue } from "./inventory.js";
+import { isBasePolicy, settingValue, usesWebProfile } from "./inventory.js";
 import type { Policy } from "../sophos/api/policies.js";
 import type { LocalSite } from "../sophos/api/web-control.js";
 
@@ -178,7 +178,8 @@ export function buildDesign(
       policies.push(d);
       continue;
     }
-    if (settingValue<boolean>(p, "endpoint.web-control.web-profile.enabled") === true && settingValue<boolean>(p, "endpoint.web-control.filter-by-web-profile.enabled") === true) {
+    // On a profile only with all three profile settings set, as the readiness check and the retire step read it.
+    if (usesWebProfile(p)) {
       d.skipped = "Already uses a web filtering profile.";
       policies.push(d);
       continue;
