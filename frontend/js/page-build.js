@@ -215,6 +215,17 @@ function checksHtml(rec) {
   return `<ul class="check-list">${rec.checks.map(checkHtml).join("")}</ul>`;
 }
 
+/**
+ * The Pilot policy card when the Design step planned no profiles: every policy was skipped (already on a profile,
+ * disabled, or nothing a profile would add), or the tenant has none. There's nothing to choose, so it says so and
+ * points at the Design step, whose Not converted card gives each policy's reason.
+ */
+function noProfilesHtml(t) {
+  const link = (text) => `<a href="/design.html?tenant=${t}">${text}</a>`;
+  const why = design.policies.length ? `${link("Open the Design step")} to see why each policy wasn't converted.` : `The tenant has no Web Control policies for the ${link("Design step")} to convert.`;
+  return `<p class="muted" data-no-profiles>The Design step planned no profiles, so there's nothing to build. ${why}</p>`;
+}
+
 function render() {
   const t = encodeURIComponent(tenantId);
   const profiles = design.profiles;
@@ -226,14 +237,14 @@ function render() {
         <h1>${esc(buildHeadline(lead, getStatus()?.readOnly))}</h1>
         <p class="page-lead">Site lists, then the profile, then a pilot policy at the top of the policy order with the profile, logging on and Recommended file types. A rollback snapshot is saved first. Every write is sent once, read back, and recorded in the audit log.</p></div>
       <div class="head-actions">
-        <button class="btn btn-lg" id="dry">${icon("search")}Dry run</button>
-        <button class="btn btn-lg btn-primary" id="go" data-write${lead && lead.status === "dry-run" && lead.checks.every((c) => c.ok) ? "" : " disabled"}>${icon("play")}Create ${lead?.steps.length ?? ""} objects</button>
+        <button class="btn btn-lg" id="dry"${profiles.length ? "" : " disabled"}>${icon("search")}Dry run</button>
+        <button class="btn btn-lg btn-primary" id="go" data-write${profiles.length && lead && lead.status === "dry-run" && lead.checks.every((c) => c.ok) ? "" : " disabled"}>${icon("play")}Create ${lead?.steps.length ?? ""} objects</button>
       </div>
     </section>
     <div class="build-grid">
       <section class="panel-card">
         <h2>Pilot policy</h2>
-        <form id="pilot" class="form-stack" onsubmit="return false">
+        ${profiles.length ? `<form id="pilot" class="form-stack" onsubmit="return false">
           <label>Profile<select id="profile">${profiles.map((p) => `<option value="${escAttr(p.key)}">${esc(p.name)}</option>`).join("")}</select></label>
           <label>Policy name<input type="text" id="pname" placeholder="WF pilot: profile name" /></label>
           <label class="checkbox"><input type="checkbox" id="enabled" checked /> Enabled (turn off to build it without changing devices yet)</label>
@@ -243,7 +254,7 @@ function render() {
             <div class="target-list">${targets.endpointGroups.map((g) => g.type === "server" ? `<label class="muted"><input type="checkbox" name="endpointGroups" value="${escAttr(g.id)}" disabled /> ${esc(g.name)}<span class="hint">server group: needs a server policy</span></label>` : `<label><input type="checkbox" name="endpointGroups" value="${escAttr(g.id)}" /> ${esc(g.name)}<span class="hint">${g.members ?? "?"} devices</span></label>`).join("") || '<span class="hint">No device groups.</span>'}</div></label>
           <label>User groups (a policy goes to devices or to users, not both)
             <div class="target-list">${targets.userGroups.map((g) => `<label><input type="checkbox" name="userGroups" value="${escAttr(g.id)}" /> ${esc(g.name)}<span class="hint">${g.members ?? "?"} users</span></label>`).join("") || '<span class="hint">No user groups.</span>'}</div></label>
-        </form>
+        </form>` : noProfilesHtml(t)}
       </section>
       <div class="score-main">
         ${lead ? `<section class="panel-card"><h2>Plan</h2>${stepsHtml(lead)}</section><section class="panel-card"><h2>Checks</h2>${checksHtml(lead)}</section>` : '<section class="panel-card"><p class="muted">Choose the profile and pilot targets, then run a dry run. Nothing is written until you confirm.</p></section>'}
@@ -259,7 +270,8 @@ function render() {
         }</section>
       </div>
     </div>`;
-  if (lead) {
+  // With no profiles planned there's no form to fill from the last plan or build.
+  if (lead && profiles.length) {
     main.querySelector("#profile").value = lead.pilot.profileKey;
     main.querySelector("#pname").value = lead.pilot.name;
     main.querySelector("#enabled").checked = lead.pilot.enabled;
