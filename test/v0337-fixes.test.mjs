@@ -87,12 +87,12 @@ const status = { status: "configured-ok", mode: "tenant", error: null, tenant: t
 const WATCH = `window.__unhandled = []; window.addEventListener("unhandledrejection", (e) => window.__unhandled.push(String(e.reason?.message ?? e.reason))); window.addEventListener("error", (e) => window.__unhandled.push(String(e.message)));`;
 const NOTHING = "The Design step planned no profiles, so there's nothing to build.";
 
-/** The Pilot policy card as drawn: its text, its link, whether it has a select or a form, and the two buttons. */
+/** The Pilot policy card as drawn: its first line, its link, whether it has a select or a form, and the two buttons. */
 const CARD = `(() => {
   const c = [...document.querySelectorAll(".panel-card")].find((s) => s.querySelector("h2")?.textContent === "Pilot policy");
   const note = c.querySelector("[data-no-profiles]");
   return {
-    note: note?.textContent.trim() ?? null,
+    note: note?.querySelector("p")?.textContent.trim() ?? null,
     link: note?.querySelector("a")?.getAttribute("href") ?? null,
     select: !!c.querySelector("select"),
     form: !!document.querySelector("#pilot"),
@@ -154,8 +154,8 @@ test("Build: with no profiles planned, the Pilot policy card says so and links t
       return card;
     };
 
-    // Every policy skipped: the reasons are on the Design step's Not converted card.
-    assert.deepEqual(await open("[data-no-profiles]"), { note: `${NOTHING} Open the Design step to see why each policy wasn't converted.`, link, select: false, form: false, options: [], dry: true, go: true });
+    // Every policy skipped: the card lists why (v0.3.38), as the Design step's Not converted card does.
+    assert.deepEqual(await open("[data-no-profiles]"), { note: `${NOTHING} Why each policy wasn't converted:`, link, select: false, form: false, options: [], dry: true, go: true });
     await b.evaluate(`document.querySelector("#dry").click(); document.querySelector("#go").click(); true`);
     await new Promise((r) => setTimeout(r, 300));
     assert.deepEqual(posts, [], "a click on either sends nothing");
@@ -167,7 +167,7 @@ test("Build: with no profiles planned, the Pilot policy card says so and links t
     // The last record is a dry run that passed, from when there was a profile: the form it would fill isn't there, and Create stays off.
     shown = { design: skipped, items: [passed, built] };
     const card = await open(".steps-list");
-    assert.deepEqual(card, { note: `${NOTHING} Open the Design step to see why each policy wasn't converted.`, link, select: false, form: false, options: [], dry: true, go: true });
+    assert.deepEqual(card, { note: `${NOTHING} Why each policy wasn't converted:`, link, select: false, form: false, options: [], dry: true, go: true });
     assert.equal(await b.evaluate(`document.querySelectorAll(".steps-list > li").length`), passed.steps.length, "the plan still shows");
     assert.equal(await b.evaluate(`document.querySelector('[data-rollback="${built.id}"]')?.disabled`), false, "the build can still be rolled back");
 

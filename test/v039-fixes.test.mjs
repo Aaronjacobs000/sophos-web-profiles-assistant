@@ -197,5 +197,5 @@ test("the Build page headline says each status in plain words", () => {
   assert.equal(buildHeadline(rec("rolled-back"), false), "Rolled back");
   assert.equal(buildHeadline(rec("rollback-partial"), false), "Rollback didn't finish");
   const page = readFileSync(new URL("../frontend/js/page-build.js", import.meta.url), "utf8");
-  assert.match(page, /<h1>\$\{esc\(buildHeadline\(lead, getStatus\(\)\?\.readOnly\)\)\}<\/h1>/, "the page uses it");
+  assert.match(page, /<h1>\$\{esc\(buildHeadline\(lead, getStatus\(\)\?\.readOnly, kept\)\)\}<\/h1>/, "the page uses it");
 });

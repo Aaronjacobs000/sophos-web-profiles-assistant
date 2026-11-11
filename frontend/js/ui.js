@@ -23,11 +23,15 @@ export function plural(n, one, many = `${one}s`) {
   return `${n} ${n === 1 ? one : many}`;
 }
 
-/** The Build page's headline for the latest plan or build, in plain words rather than its status value. */
-export function buildHeadline(rec, readOnly) {
+/**
+ * The Build page's headline for the latest plan or build, in plain words rather than its status value. A dry run of a
+ * profile the Design step no longer plans (planned false) is out of date: Create is off for it.
+ */
+export function buildHeadline(rec, readOnly, planned = true) {
   if (!rec) return "Plan the pilot";
   switch (rec.status) {
     case "dry-run":
+      if (!planned) return "Dry run out of date";
       if (!rec.checks.every((c) => c.ok)) return "Dry run found problems";
       return readOnly ? "Dry run passed. Read-only mode, so nothing will be created." : `Dry run passed. Ready to create ${rec.steps.length} objects.`;
     case "built":

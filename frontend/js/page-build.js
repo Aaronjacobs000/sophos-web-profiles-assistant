@@ -217,13 +217,17 @@ function checksHtml(rec) {
 
 /**
  * The Pilot policy card when the Design step planned no profiles: every policy was skipped (already on a profile,
- * disabled, or nothing a profile would add), or the tenant has none. There's nothing to choose, so it says so and
- * points at the Design step, whose Not converted card gives each policy's reason.
+ * disabled, or nothing a profile would add), or the tenant has none. There's nothing to choose, so it says so, lists
+ * each policy with why it wasn't converted, as the Design step's Not converted card does, and links to that step.
  */
 function noProfilesHtml(t) {
   const link = (text) => `<a href="/design.html?tenant=${t}">${text}</a>`;
-  const why = design.policies.length ? `${link("Open the Design step")} to see why each policy wasn't converted.` : `The tenant has no Web Control policies for the ${link("Design step")} to convert.`;
-  return `<p class="muted" data-no-profiles>The Design step planned no profiles, so there's nothing to build. ${why}</p>`;
+  const nothing = "The Design step planned no profiles, so there's nothing to build.";
+  const skipped = design.policies.filter((p) => p.skipped);
+  if (!skipped.length) return `<div data-no-profiles><p class="muted">${nothing} The tenant has no Web Control policies for the ${link("Design step")} to convert.</p></div>`;
+  return `<div data-no-profiles><p class="muted">${nothing} Why each policy wasn't converted:</p>
+    <ul class="flag-list" data-not-converted>${skipped.map((p) => `<li><b>${esc(p.policyName)}</b>: ${esc(p.skipped)}</li>`).join("")}</ul>
+    <p class="hint">${link("Open the Design step")} for the details.</p></div>`;
 }
 
 function render() {
@@ -231,21 +235,26 @@ function render() {
   const profiles = design.profiles;
   const lead = lastPlan;
   const devices = targets.endpoints;
+  // The last plan or build's profile, when the Design step still plans it: only then is it restored, and only then can its dry run be built.
+  const kept = !!lead && profiles.some((p) => p.key === lead.pilot.profileKey);
+  const gone = lead && !kept ? lead.steps.find((s) => s.kind === "profile")?.name : undefined;
+  const what = lead?.status === "dry-run" ? "dry run" : "build";
   main.innerHTML = `
     <section class="page-head">
       <div><span class="eyebrow">Build${lead ? `: ${esc(lead.pilot.name)}` : ""}</span>
-        <h1>${esc(buildHeadline(lead, getStatus()?.readOnly))}</h1>
+        <h1>${esc(buildHeadline(lead, getStatus()?.readOnly, kept))}</h1>
         <p class="page-lead">Site lists, then the profile, then a pilot policy at the top of the policy order with the profile, logging on and Recommended file types. A rollback snapshot is saved first. Every write is sent once, read back, and recorded in the audit log.</p></div>
       <div class="head-actions">
         <button class="btn btn-lg" id="dry"${profiles.length ? "" : " disabled"}>${icon("search")}Dry run</button>
-        <button class="btn btn-lg btn-primary" id="go" data-write${profiles.length && lead && lead.status === "dry-run" && lead.checks.every((c) => c.ok) ? "" : " disabled"}>${icon("play")}Create ${lead?.steps.length ?? ""} objects</button>
+        <button class="btn btn-lg btn-primary" id="go" data-write${kept && lead.status === "dry-run" && lead.checks.every((c) => c.ok) ? "" : " disabled"}>${icon("play")}Create ${lead?.steps.length ?? ""} objects</button>
       </div>
     </section>
     <div class="build-grid">
       <section class="panel-card">
         <h2>Pilot policy</h2>
         ${profiles.length ? `<form id="pilot" class="form-stack" onsubmit="return false">
-          <label>Profile<select id="profile">${profiles.map((p) => `<option value="${escAttr(p.key)}">${esc(p.name)}</option>`).join("")}</select></label>
+          <label>Profile<span class="hint" style="font-weight:400" data-profile-hint>The profile the pilot policy will use. The list comes from the Design step.</span><select id="profile">${profiles.map((p) => `<option value="${escAttr(p.key)}">${esc(p.name)}</option>`).join("")}</select></label>
+          ${lead && !kept ? `<p class="hint" style="margin:-6px 0 0" data-profile-gone>The last ${what} used ${gone ? `the profile "${esc(gone)}", which` : "a profile"} the Design step no longer plans.</p>` : ""}
           <label>Policy name<input type="text" id="pname" placeholder="WF pilot: profile name" /></label>
           <label class="checkbox"><input type="checkbox" id="enabled" checked /> Enabled (turn off to build it without changing devices yet)</label>
           <label>Devices (Windows on 2026.1 or later can use profiles)
@@ -257,7 +266,7 @@ function render() {
         </form>` : noProfilesHtml(t)}
       </section>
       <div class="score-main">
-        ${lead ? `<section class="panel-card"><h2>Plan</h2>${stepsHtml(lead)}</section><section class="panel-card"><h2>Checks</h2>${checksHtml(lead)}</section>` : '<section class="panel-card"><p class="muted">Choose the profile and pilot targets, then run a dry run. Nothing is written until you confirm.</p></section>'}
+        ${lead ? `<section class="panel-card"><h2>Plan</h2>${stepsHtml(lead)}</section><section class="panel-card"><h2>Checks</h2>${checksHtml(lead)}</section>` : profiles.length ? '<section class="panel-card"><p class="muted">Choose the profile and pilot targets, then run a dry run. Nothing is written until you confirm.</p></section>' : ""}
         ${diffHtml(diff)}
         <section class="panel-card"><h2>Builds</h2>${
           builds.length
@@ -272,7 +281,7 @@ function render() {
     </div>`;
   // With no profiles planned there's no form to fill from the last plan or build.
   if (lead && profiles.length) {
-    main.querySelector("#profile").value = lead.pilot.profileKey;
+    if (kept) main.querySelector("#profile").value = lead.pilot.profileKey;
     main.querySelector("#pname").value = lead.pilot.name;
     main.querySelector("#enabled").checked = lead.pilot.enabled;
     for (const [k, ids] of Object.entries(lead.pilot.targets)) for (const id of ids ?? []) {
