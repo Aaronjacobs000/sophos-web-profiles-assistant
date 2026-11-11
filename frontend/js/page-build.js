@@ -271,7 +271,7 @@ function render() {
         <section class="panel-card"><h2>Builds</h2>${
           builds.length
             ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>When</th><th>Pilot</th><th>Status</th><th>Snapshot</th><th></th></tr></thead><tbody>${builds
-                .map((b) => `<tr><td class="cell-nowrap">${new Date(b.createdAt).toLocaleString("en-GB")}</td><td>${esc(b.pilot.name)}</td><td>${esc(buildHeadline(b))}</td><td><code>${esc(b.snapshotFile ?? "")}</code></td><td class="cell-nowrap">
+                .map((b) => `<tr><td class="cell-nowrap">${new Date(b.createdAt).toLocaleString("en-GB")}</td><td>${esc(b.pilot.name)}</td><td>${esc(buildHeadline(b, false, profiles.some((p) => p.key === b.pilot.profileKey)))}</td><td><code>${esc(b.snapshotFile ?? "")}</code></td><td class="cell-nowrap">
                   ${["built", "partial", "rollback-partial"].includes(b.status) ? `<button class="btn btn-small btn-danger" data-rollback="${escAttr(b.id)}">Roll back</button>` : ""}
                   ${b.snapshotFile ? `<button class="btn btn-small" data-diff="${escAttr(b.snapshotFile)}">Compare with snapshot</button>` : ""}</td></tr>`)
                 .join("")}</tbody></table></div>`
@@ -282,7 +282,9 @@ function render() {
   // With no profiles planned there's no form to fill from the last plan or build.
   if (lead && profiles.length) {
     if (kept) main.querySelector("#profile").value = lead.pilot.profileKey;
-    main.querySelector("#pname").value = lead.pilot.name;
+    // The name the tool made from a profile that's no longer planned would name the new pilot after it: only a typed name is put back.
+    const madeName = gone !== undefined && lead.pilot.name === `WF pilot: ${gone}`.slice(0, 100);
+    if (kept || !madeName) main.querySelector("#pname").value = lead.pilot.name;
     main.querySelector("#enabled").checked = lead.pilot.enabled;
     for (const [k, ids] of Object.entries(lead.pilot.targets)) for (const id of ids ?? []) {
       const box = main.querySelector(`input[name="${k}"][value="${CSS.escape(id)}"]`);
